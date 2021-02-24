@@ -42,3 +42,41 @@ Here I installed hello.ko (insmod) and copied the address of the module:
 ```gdb> b *<address copied>```  
   
 Then I removed hello module (rmmod) and restarted it. Now I got a breakpoint in the init_module function.
+
+# Device file  
+I updated the original hello.c to be able to read and write data to a device file and store its content in a static buffer.  
+It can be found in the folder modules/hello2, and there is another folder, which contains a user space program, that writes to this device file and reads from it.  
+
+First I need to load the kernel module:  
+```insmod hello2.ko```  
+
+Then I need the major version of the registered character device, which I can find in dmesg:  
+```
+dmesg | tail   
+...
+[ 8253.792398] hello2 module loaded with device major number 248
+```  
+
+With this number I'm able to create a character device file for this module:  
+```mknod /dev/hello2 c 248 0``` 
+
+Now I can test the userspace program, which I compiled on the host machine and scp-d to the qemu instance:  
+```
+./up-test
+[+] Opening device file for writing...
+String to send to module:
+Hello, I'm LaTsa
+[+] Writing message to the device file...
+[+] Messafe successfully written into the device file!
+
+
+[+] Reading from from the device file...
+[+] The message is: Hello, I'm LaTsa
+```  
+
+Now I can remove the device file and stop the kernel module:  
+```
+rm -f /dev/hello2 
+rmmod hello2.ko 
+[ 8752.559090] Goodbye then
+```
