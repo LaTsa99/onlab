@@ -1,4 +1,4 @@
-# onlab
+# SEMESTER PROJECT 2021 - Laszlo Szapula
 
 # Installing qemu
 sudo apt install qemu qemu-system-x86
