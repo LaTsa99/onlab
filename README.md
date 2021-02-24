@@ -37,7 +37,7 @@ gdb> target remote :1234
 Here I installed hello.ko (insmod) and copied the address of the module:  
 cat /proc/modules | grep hello  
 
-gdb> add-symbols-file src/hello/hello.ko <address copied>  
-gdb> b *<address copied>  
+gdb> add-symbols-file src/hello/hello.ko \<address copied\>  
+gdb> b \*\<address copied\>  
   
 Then I removed hello module (rmmod) and restarted it. Now I got a breakpoint in the init_module function.
