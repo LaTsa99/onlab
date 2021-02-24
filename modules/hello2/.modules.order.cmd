@@ -1,0 +1,1 @@
+cmd_/home/latsa/kernel_debug/linux/src/hello2/modules.order := {   echo /home/latsa/kernel_debug/linux/src/hello2/hello2.ko; :; } | awk '!x[$$0]++' - > /home/latsa/kernel_debug/linux/src/hello2/modules.order

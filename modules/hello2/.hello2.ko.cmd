@@ -1,0 +1,1 @@
+cmd_/home/latsa/kernel_debug/linux/src/hello2/hello2.ko := ld -r -m elf_x86_64  --build-id=sha1  -T scripts/module.lds -o /home/latsa/kernel_debug/linux/src/hello2/hello2.ko /home/latsa/kernel_debug/linux/src/hello2/hello2.o /home/latsa/kernel_debug/linux/src/hello2/hello2.mod.o;  true

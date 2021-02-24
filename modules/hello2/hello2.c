@@ -29,6 +29,9 @@ static struct file_operations file_ops = {
 static ssize_t device_read(struct file *flip, char *buffer, size_t len, loff_t *offset){
 	int error_count = 0;
 
+	if(len > 256)
+		return -EOVERFLOW;
+
 	error_count = copy_to_user(buffer, msg_ptr, size_of_message);
 
 	if(error_count == 0){
@@ -39,8 +42,17 @@ static ssize_t device_read(struct file *flip, char *buffer, size_t len, loff_t *
 }
 
 static ssize_t device_write(struct file *flip, const char *buffer, size_t len, loff_t *offset){
-	sprintf(msg_buffer, "%s", buffer);
-	size_of_message = strlen(msg_buffer);
+	int error_count = 0;
+		
+	if(len > 256)
+		return -EOVERFLOW;
+
+	error_count = copy_from_user(msg_ptr, buffer, len);
+
+	if(error_count != 0)
+		return -EFAULT;
+
+	size_of_message = strlen(msg_ptr);
 	return len;
 }
 
