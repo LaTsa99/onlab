@@ -27,13 +27,19 @@ static struct file_operations file_ops = {
 };
 
 static ssize_t device_read(struct file *flip, char *buffer, size_t len, loff_t *offset){
-	memcpy(buffer, msg_ptr, size_of_message);
+    if(len > 256)
+            return -EOVERFLOW;
+
+    memcpy(buffer, msg_buffer, size_of_message);
 	return (size_of_message=0);
 }
 
 static ssize_t device_write(struct file *flip, const char *buffer, size_t len, loff_t *offset){
-	memcpy(msg_ptr, buffer, len);
-	size_of_message = len;
+    if(len>256)
+            return -EOVERFLOW;
+
+    memcpy(msg_buffer, buffer, len);
+	size_of_message = strlen(buffer);
 	return len;
 }
 
@@ -55,12 +61,12 @@ static int device_release(struct inode *inod, struct file *file){
 
 int hello2_init(void){
 	msg_ptr = msg_buffer;
-	major_num = register_chrdev(0, "hello2", &file_ops);
+	major_num = register_chrdev(0, "hello2_vuln", &file_ops);
 	if(major_num < 0){
 		printk(KERN_ALERT "Could not register device: %d\n", major_num);
 		return major_num;
 	} else {
-		printk(KERN_INFO "hello2 module loaded with device major number %d\n", major_num);
+		printk(KERN_INFO "hello2_vuln module loaded with device major number %d\n", major_num);
 		return 0;
 	}
 }
