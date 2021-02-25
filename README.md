@@ -1,5 +1,17 @@
 # Semester project 2021 - László Szapula
 
+## Table of contents
+
+* [Creating the enviornment and the first kernel module](#creating-the-enviornment-and-the-first-kernel-module)  
+         * [Installing qemu](#installing-qemu)  
+         * [Building linux kernel](#building-linux-kernel)  
+         * [Compiling buildroot](#compiling-buildroot)  
+         * [Boot script and testing](#boot-script-and-testing)  
+         * [GDB](#gdb)  
+* [Device driver module and the first exploit](#device-driver-module-and-the-first-exploit)  
+         * [Device file](#device-file)  
+         * [The first exploit](#the-first-exploit)  
+
 ## Creating the enviornment and the first kernel module
 
 ### Installing qemu
