@@ -11,7 +11,7 @@
 * [Device driver module and the first exploit](#device-driver-module-and-the-first-exploit)  
          * [Device file](#device-file)  
          * [The first exploit](#the-first-exploit)   
-* [Privilege escalation with driver files](#pivilege-escalation-with-driver-files)   
+* [Privilege escalation with driver files](#privilege-escalation-with-driver-files)   
 	 * [Cleaning up previous exploit ](#cleaning-up-previous-exploit)  
 	 * [Getting root shell](#getting-root-shell)  
 
