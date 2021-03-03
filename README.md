@@ -10,8 +10,10 @@
          * [GDB](#gdb)  
 * [Device driver module and the first exploit](#device-driver-module-and-the-first-exploit)  
          * [Device file](#device-file)  
-         * [The first exploit](#the-first-exploit)  
-* [Privilege escalation with driver files](#pivilege-escalation-with-driver-files)
+         * [The first exploit](#the-first-exploit)   
+* [Privilege escalation with driver files](#pivilege-escalation-with-driver-files)   
+	 * [Cleaning up previous exploit ](#cleaning-up-previous-exploit)  
+	 * [Getting root shell](#getting-root-shell)  
 
 ## Creating the enviornment and the first kernel module
 
@@ -220,5 +222,26 @@ Linux
 HELLO latsa_kernel 5.11.0 #2 SMP Wed Mar 3 11:40:39 CET 2021 x86_64 GNU/Linux
 ```  
 
+### Getting root shell  
 
+```
+# id
+uid=1000(user) gid=1000 groups=1000
+# ./privesc 
+[+] PID = 183
+[+] Reading head from init_tast...
+[+] Kernel read
+[+] Searching for the PID of this program...
+        [+] PID of task: 2
+        [+] PID of task: 3
+        ...
+        [+] PID of task: 183
+[+] Address to our task: 0xffff888004471a80
+[+] Address to cred: 0xffff8880044b7300
+[+] Now setting our cred to 0...
+[+] Root shell gained!
+# id
+uid=0(root) gid=1000 groups=1000
+#
+```
 
