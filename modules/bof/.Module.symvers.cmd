@@ -1,0 +1,1 @@
+cmd_/home/latsa/kernel_debug/linux/src/bof/Module.symvers := sed 's/ko$$/o/' /home/latsa/kernel_debug/linux/src/bof/modules.order | scripts/mod/modpost     -o /home/latsa/kernel_debug/linux/src/bof/Module.symvers -e -i Module.symvers   -T -
