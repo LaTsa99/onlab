@@ -9,7 +9,7 @@
 #define WRITE_STACK 0
 #define READ_STACK 1
 
-#define MAX_MSG 1024
+#define MAX_MSG 256
 
 typedef struct read_write_stack{
 	unsigned long size;
@@ -44,7 +44,7 @@ int main(){
 	}
 
 	read_write_stack* receiver = (read_write_stack*)malloc(sizeof(unsigned long) + sizeof(char*));
-	receiver->size = 300;
+	receiver->size = msg_size;
 
 	printf("[+] Trying to read from kernel stack...\n");
 	ret = ioctl(fd, READ_STACK, (unsigned long)receiver);
@@ -52,12 +52,7 @@ int main(){
 		printf("[-] Failed to read from kernel stack\n");
 		exit(-1);
 	}else{
-		printf("[+] Received message\n");
-		printf("Content of the kernel stack:\n");
-		for(int i=0;i < 300; i++){
-			printf("%x\n", receiver->msg[i]);
-		}
-
+		printf("[+] Received message: %s\n", receiver->msg);
 	}
 
 	free(payload);

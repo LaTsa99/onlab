@@ -7,12 +7,22 @@
 #define STACK_WRITE 0
 #define STACK_READ 1
 
+#define OUT 0
+#define IN 1
+
 MODULE_LICENSE("GPL");
 
 static int major_num;
-static char msg_buffer[256] = {0};
-static char *msg_ptr;
 static int device_open_count = 0;
+
+int copy_user(void *kernel_ptr, void *user_ptr, unsigned long size, unsigned short dir){
+	if(dir == OUT){
+		return copy_to_user(user_ptr, kernel_ptr, size);
+	}
+	else{
+		return copy_from_user(kernel_ptr, user_ptr, size);
+	}
+}
 
 // prototypes for device functions
 static int device_open(struct inode *, struct file *);
@@ -29,16 +39,15 @@ static struct file_operations file_ops = {
 static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg){
 	int error_count = 0;
 	unsigned long size;
+	int msg_buffer[256] = {0};
 
 	switch(cmd){
 		case STACK_WRITE:{
 			printk(KERN_INFO "Stack write\n");
 
 			get_user(size, (unsigned long *)arg);
-			if(size > 256)
-				return -EOVERFLOW;
 
-			error_count = copy_from_user(msg_ptr,(unsigned long *)(arg+8), size);
+			error_count = copy_user(msg_buffer,(unsigned long *)(arg+8), size * sizeof(int), IN);
 			if(error_count == 0){
 				return 0;
 			}else{
@@ -51,10 +60,9 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			printk(KERN_INFO "Stack read\n");
 
 			get_user(size, (unsigned long*)arg);
-			if(size > 256)
-				return -EOVERFLOW;
 
-			error_count = copy_to_user((unsigned long*)(arg+8), msg_ptr, size);
+			//error_count = copy_to_user((unsigned long*)(arg+8), msg_ptr, size);
+			error_count = copy_user(msg_buffer, (unsigned long*)(arg+8), size * sizeof(int), OUT);
 			
 			if(error_count == 0){
 				return 0;
@@ -89,7 +97,6 @@ static int device_release(struct inode *inod, struct file *file){
 }
 
 int bof_init(void){
-	msg_ptr = msg_buffer;
 	major_num = register_chrdev(0, "bof", &file_ops);
 	if(major_num < 0){
 		printk(KERN_ALERT "Could not register device: %d\n", major_num);
