@@ -14,6 +14,7 @@
 * [Privilege escalation with driver files](#privilege-escalation-with-driver-files)   
 	 * [Cleaning up previous exploit ](#cleaning-up-previous-exploit)  
 	 * [Getting root shell](#getting-root-shell)  
+* [Return-to-user](#return-to-user)  
 
 ## Creating the enviornment and the first kernel module
 
@@ -319,5 +320,78 @@ uid=1000(user) gid=1000 groups=1000
 # id
 uid=0(root) gid=1000 groups=1000
 #
+```  
+
+# Return-to-user  
+## Writing ioctl kernel driver  
+To start this chapter, we need an other kind of kernel driver: one, which uses ioctl to handle IO. This can be done by adding `.unlocked_ioctl` to the file operations struct:  
+```C
+static struct file_operations file_ops = {
+        .open = device_open,
+        .release = device_release,
+        .unlocked_ioctl = device_ioctl
+};
+```  
+The head of the function looks like this:  
+```C
+static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+```  
+So, this function takes the usual file descriptor of our device file, an unsigned integer as a command, and an unsigned long as an argument. With the command we will decide, what the function will do with the arg parameter. For now, we will define two commands: `WRITE_STACK` and `READ_STACK`. These two commands are handled in a switch-case structure:  
+```C
+switch(cmd){
+                case STACK_WRITE:{
+                        printk(KERN_INFO "Stack write\n");
+                        ...
+                        break;
+                                 }
+                case STACK_READ:{
+                        printk(KERN_INFO "Stack read\n");
+			...
+                        break;
+                                }
+                default:
+                        printk(KERN_INFO "Unknown cmd %d\n", cmd);
+        }
 ```
+In STACK_WRITE, the driver handles the arg as a pointer to the input from user-space. This can be done, because `long` is 8 byte, which is the legth of a pointer in x86_64. The driver will assumen, that the pointer points to a structure, which has a 8 byte integer (a long), and a static char buffer, which contains a message. We will talk about these structs by the user-space program. So, STACK_WRITE takes the size from the struct with `get_user()`, and uses this length to copy the data from the static char buffer of the struct with `copy_from_user()` (I won't validate the given sizes to be able to perform buffer overflow):  
+```C
+get_user(size, (unsigned long *)arg);
+
+error_count = copy_from_user(msg_ptr,(unsigned long *)(arg+8), size);
+if(error_count == 0){
+	return 0;
+}else{
+	return -EFAULT;
+}
+```  
+`msg_ptr` is just pointing to a char array, which is used as a local buffer on the stack. That's where the input will be stored.  
+```C
+char msg_buffer[256] = {0};
+char *msg_ptr = msg_buffer;
+```  
+STACK_READ does basically the same, but there is `copy_to_user()` instead of "from".  
+One more trick has been used here later. Because of a safety check, we cannot read more bytes from a buffer with `copy_to_user`, than the length of the buffer. This is a check made by the compiler and there is a documentation about it: [Object Size Checking](https://gcc.gnu.org/onlinedocs/gcc/Object-Size-Checking.html)  
+To get around that, we need to migrate the copy functions into another one, to hide it from the compiler. For this reason I wrote the following function:  
+```C
+int copy_user(void *kernel_ptr, void *user_ptr, unsigned long size, unsigned short dir){
+        if(dir == OUT){
+                return copy_to_user(user_ptr, kernel_ptr, size);
+        }
+        else{
+                return copy_from_user(kernel_ptr, user_ptr, size);
+        }
+}
+```  
+And this can be used easily both in READ_STACK and in WRITE_STACK:  
+```C
+//WRITE_STACK
+...
+error_count = copy_user(msg_ptr,(unsigned long *)(arg+8), size, IN);
+...
+//READ_STACK
+...
+error_count = copy_user(msg_ptr, (unsigned long*)(arg+8), size, OUT);
+...
+```  
+With this we are done with the kernel driver, we can move on to the exploitation.  
 
