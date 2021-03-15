@@ -19,7 +19,7 @@
 	 * [SMEP and SMAP](#smep-and-smap)
 	 * [Getting the stack cookie](#getting-the-stack-cookie)  
 	 * [Overwriting return address](#overwriting-return-address)
-	 * [Getting root shell](#getting-root-shell)
+	 * [Privesc in userland](#privesc-in-userland)
 
 ## Creating the enviornment and the first kernel module
 
@@ -517,7 +517,7 @@ Because the syscalls are called with software interrupts and there is still junk
 [   98.325100] Kernel panic - not syncing: Fatal exception in interrupt
 [   98.325416] Kernel Offset: disabled
 ```  
-### Getting root shell  
+### Privesc in userland  
 In order to get root shell, we need to evelate our privileges in the exploit program, then open a shell from within. Because we can execute user space code from the kernel, we can easily call two kernel functions to achieve this: `commit_creds()` and `prepare_kernel_cred()`. If we call these like `commit_creds(prepare_kernel_cred(0))` we basically evelate the privileges of our process to root. 
 One way to call them is inline assembly. For that, we need to find the addresses of these functions. Because these are kernel functions, we can find them in `/proc/kallsyms` and they will have the same addresses in same kernel versions (if KASLR is not active):  
 ```
