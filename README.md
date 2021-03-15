@@ -1,5 +1,4 @@
 # Semester project 2021 - Linux kernel mitigations
-## By: László Szapula
 
 ## Table of contents
 
