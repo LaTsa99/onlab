@@ -1,1 +1,0 @@
-cmd_/home/latsa/kernel_debug/linux/src/hello2_vuln/hello2_vuln.mod := { echo  /home/latsa/kernel_debug/linux/src/hello2_vuln/hello2_vuln.o;  echo; } > /home/latsa/kernel_debug/linux/src/hello2_vuln/hello2_vuln.mod

@@ -4,3 +4,5 @@
 *.o
 *.order
 *.symvers
+*.cmd
+*.swp
