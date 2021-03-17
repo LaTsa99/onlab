@@ -20,6 +20,9 @@
 	 * [Getting the stack cookie](#getting-the-stack-cookie)  
 	 * [Overwriting return address](#overwriting-return-address)
 	 * [Privesc in userland](#privesc-in-userland)
+	 * [PTI bug](#pti-bug)
+* [Bypassing SMEP](#bypassing-smep)  
+	 * [ROP gadgets](#rop-gadgets)  
 
 ## Creating the enviornment and the first kernel module
 
@@ -630,4 +633,18 @@ uid=1000(user) gid=1000 groups=1000
 # id
 uid=0(root) gid=0(root)
 ```  
-We got a root shell!
+We got a root shell!  
+
+### PTI bug  
+Running this exploit on another machine seems to be broken, because running `system("/bin/sh");` triggers `pti` and exits with an Oops message. We can bypass this by adding the following things to the append flag in boot.sh:  
+`spectre_v2=off nopti pti=off`  
+After this, the exploit will result in a segmentation fault, because there is some errors in system(). We can replace it with `execve()`:  
+```C
+char *arg[2] = {"/bin/sh", NULL};
+execve("/bin/sh", arg, NULL);
+```  
+Now the exploit works as it is supposed to.  
+
+## Bypassing SMEP  
+### ROP gadgets  
+If we enable `SMEP`, we won't be able to execute code in userland pages while operating in kernel mode. One way to bypass that is by using return oriented programming. 
