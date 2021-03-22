@@ -3,10 +3,7 @@
 #include <linux/kernel.h>
 #include <linux/fs.h>
 #include <asm/uaccess.h>
-
-#define STACK_WRITE 0
-#define STACK_READ 1
-#define CALL_FUNC 2
+#include "bof2.h"
 
 #define OUT 0
 #define IN 1
@@ -44,7 +41,7 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	int msg_buffer[256] = {0};
 
 	switch(cmd){
-		case STACK_WRITE:{
+		case IOCTL_WRITE:{
 			printk(KERN_INFO "Stack write\n");
 
 			get_user(size, (unsigned long *)arg);
@@ -58,7 +55,7 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 			break;
 				 }
-		case STACK_READ:{
+		case IOCTL_READ:{
 			printk(KERN_INFO "Stack read\n");
 
 			get_user(size, (unsigned long*)arg);
@@ -73,12 +70,13 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			}
 
 			break;
-				}
-        case CALL_FUNC:{
+		}
+        case IOCTL_FUNC:{
             printk(KERN_INFO "Call func\n");
             fn = (void (*)(void))arg;
-            (*fn)();
-                }
+            fn();
+            break;
+        }
 		default:
 			printk(KERN_INFO "Unknown cmd %d\n", cmd);
 	}
