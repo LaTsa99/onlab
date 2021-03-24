@@ -1,2 +1,8 @@
 SMEP bypass - https://www.youtube.com/watch?v=6hVHQZ75TV8
 ret2user - https://lkmidas.github.io/posts/20210123-linux-kernel-pwn-part-1/
+
+*******HEAP********
+Slab allocator - https://www.youtube.com/watch?v=h0VMLXavx30
+Slides for this video - https://events.static.linuxfound.org/sites/events/files/slides/slaballocators.pdf
+Blogpost about this - https://hammertux.github.io/slab-allocator
+Blogpost about a simple sluboverflow exploit - https://resources.infosecinstitute.com/topic/exploiting-linux-kernel-heap-corruptions-slub-allocator/
