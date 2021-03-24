@@ -26,6 +26,8 @@
 	 * [ROP chaining](#rop-chaining)
 	 * [Improving kernel module](#improving-kernel-module)
 	 * [Bypass SMEP with stack pivoting](#bypass-smep-with-stack-pivoting)
+* [Heap overflow](#heap-overflow)
+	 * [Heap overflow primitive](#heap-overflow-primitive)  
 
 ## Creating the enviornment and the first kernel module
 
@@ -862,3 +864,72 @@ uid=0(root) gid=0(root)
 ```  
 Another root shell!!  
 ##### Note for myself: SAVE THE DAMN STATE!!!
+
+## Heap overflow  
+### Heap overflow primitive  
+For the next set of exploitations we need to extend our kernel driver with 2 new commands: one, which uses `kmalloc` to allocate memory on the kernel heap, and another one, which uses `kfree` to free up the slab on a given kernel heap address. For this I added two command ID-s to the header file:  
+```C
+#define IOCTL_KMALLOC	_IOWR(IOCTL_MAGIC, 3, unsigned long)
+#define IOCTL_KFREE	_IOWR(IOCTL_MAGIC, 4, unsigned long)
+```
+To make communication with `KMALLOC` possible, I defined a struct in this header file, which contains a `size` field, which tells how many bytes we want to allocate, and an `addr` field, which will be used by the driver to return the allocated address.  
+```C
+struct iomalloc{
+	size_t size;
+	void* addr;
+};
+```  
+The KMALLOC clause of our ioctl function checks, if the given size is under the predefined maximal size (right now 4 * 4096, also 4 pages), then allocates this size using `kmalloc`, which is the heap allocator of the linux kernel, and uses SLUB to allocate this memory.  
+```C
+case IOCTL_KMALLOC:{
+			printk(KERN_INFO "Allocating kernel memory\n");
+			
+			iom = (struct iomalloc*)arg;
+
+			if(iom->size > MAX_ALLOC)
+				return -EOVERFLOW;
+
+			allocated = kmalloc(iom->size, GFP_KERNEL);
+			iom->addr = allocated;
+			break;
+		}
+```  
+The KFREE clause will only call `kfree` on the passed address.  
+```C
+case IOCTL_KFREE:{
+			printk(KERN_INFO "Freeing kernel memory\n");
+			kfree((const void*)arg);
+			break;
+		}
+```  
+To test these commands, I wrote a small test program, that allocates memory on the kernel heap, then frees it.  
+```C
+struct iomalloc *iom = (struct iomalloc*)malloc(sizeof(struct iomalloc));
+if(iom == NULL){
+	...
+}
+
+iom->size = 4096;
+iom->addr = NULL;
+
+ret = ioctl(fd, IOCTL_KMALLOC, iom);
+if(ret < 0){
+	...
+}
+...
+ioctl(fd, IOCTL_KFREE, iom->addr);
+```  
+This gives the following output:  
+```
+# id
+uid=1000(user) gid=1000 groups=1000
+# ./test
+[+] Opening device file...
+[+] Allocating memory in kernel heap...
+[17766.934224] Allocating kernel memory
+[+] Address of allocated memory: 0xffff8880043df000
+[+] Freeing allocated memory
+[17766.936270] Freeing kernel memory
+[+] Memory freed
+```  
+This way we can play around with kernel heap even if we are non-root users.  
