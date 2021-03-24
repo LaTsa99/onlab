@@ -10,6 +10,8 @@
 int main(){
 	int fd;
 	int ret;
+	char *payload = "Hello!";
+	char recv[128] = {0};
 
 	printf("[+] Opening device file...\n");
 
@@ -29,6 +31,14 @@ int main(){
 		exit(-1);
 	}
 
+	struct ioheap *ioh = (struct ioheap*)malloc(sizeof(struct ioheap));
+	if(ioh == NULL){
+		printf("[-] Failed to create payload struct\n");
+		close(fd);
+		free(iom);
+		exit(-1);
+	}
+
 	iom->size = 4096;
 	iom->addr = NULL;
 
@@ -41,6 +51,35 @@ int main(){
 	}
 
 	printf("[+] Address of allocated memory: %p\n", iom->addr);
+	printf("[+] Writing to allocated memory: %s\n", payload);
+
+	ioh->size = 6;
+	ioh->dest = iom->addr;
+	ioh->src = payload;
+
+	ret = ioctl(fd, IOCTL_HEAP_RW, ioh);
+	if(ret < 0){
+		printf("[-] Failed to write to memory\n");
+		close(fd);
+		free(iom);
+		free(ioh);
+		exit(-1);
+	}
+
+	ioh->dest = recv;
+	ioh->src = iom->addr;
+
+	ret = ioctl(fd, IOCTL_HEAP_RW, ioh);
+	if(ret < 0){
+		printf("[-] Failed to read from memory\n");
+		close(fd);
+		free(iom);
+		free(ioh);
+		exit(-1);
+	}
+
+	printf("[+] Reading from allocated memory: %s\n", recv);
+
 	printf("[+] Freeing allocated memory\n");
 
 	ioctl(fd, IOCTL_KFREE, iom->addr);
