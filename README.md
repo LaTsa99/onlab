@@ -932,4 +932,38 @@ uid=1000(user) gid=1000 groups=1000
 [17766.936270] Freeing kernel memory
 [+] Memory freed
 ```  
-This way we can play around with kernel heap even if we are non-root users.  
+This way we can play around with kernel heap even if we are non-root users. Of course, we need a command to be able to read and write kernel heap. I just made a simple memcpy command for this:  
+```C
+case IOCTL_HEAP_RW:{
+			printk(KERN_INFO "Kernel heap IO\n");
+			ioh = (struct ioheap*)arg;
+			memcpy(ioh->dest, ioh->src, ioh->size);
+			break;
+		}
+```  
+I even made a new structure for this command:  
+```C
+struct ioheap{
+	size_t size;
+	void *src;
+	void *dest;
+};
+```  
+Using this command in our test program we get the following output:  
+```
+# id
+uid=1000(user) gid=1000 groups=1000
+# ./test
+[+] Opening device file...
+[+] Allocating memory in kernel heap...
+[22953.906168] Allocating kernel memory
+[+] Address of allocated memory: 0xffff8880043df000
+[+] Writing to allocated memory: Hello!
+[22953.914409] Kernel heap IO
+[22953.916321] Kernel heap IO
+[+] Reading from allocated memory: Hello!
+[+] Freeing allocated memory
+[22953.922445] Freeing kernel memory
+[+] Memory freed
+```  
+
