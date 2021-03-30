@@ -44,6 +44,7 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	int msg_buffer[256] = {0};
 	void *allocated = NULL;
 	struct iomalloc *iom = NULL;
+	struct iorw *rw = NULL;
 
 	switch(cmd){
 		case IOCTL_WRITE:{
@@ -96,6 +97,12 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		case IOCTL_KFREE:{
 			printk(KERN_INFO "Freeing kernel memory\n");
 			kfree((const void*)arg);
+			break;
+		}
+		case IOCTL_RW_HEAP:{
+			printk(KERN_INFO "R/W kernel heap\n");
+			rw = (struct iorw*)arg;
+			memcpy(rw->to, rw->from, rw->size);
 			break;
 		}
 		default:
