@@ -46,7 +46,7 @@ void driver_alloc(struct iomalloc *iom){
 	}
 }
 
-void driver_read_write(void* from, void* to, size_t size){
+void driver_read_write(void* to, void* from, size_t size){
 	int ret;
 
 	struct iorw *rw = (struct iorw*)malloc(sizeof(struct iorw));
