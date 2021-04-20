@@ -29,7 +29,8 @@
 * [Heap overflow](#heap-overflow)
 	 * [Heap overflow primitive](#heap-overflow-primitive)  
 	 * [SLUB overflow](#slub-overflow)  
-	 * [Moving on to shmat](#moving-on-to-shmat)
+	 * [Moving on to shmat](#moving-on-to-shmat)  
+* [A CTF excercise](#a-ctf-excercise)
 
 ## Creating the enviornment and the first kernel module
 
@@ -1230,3 +1231,7 @@ uid=1000(user) gid=1000 groups=1000
 uid=0(root) gid=0(root)
 ```  
 ... it should work.
+
+
+## A CTF excercise  
+Before moving on to learning arm64, I was given a ctf challenge to solve, to check if I really understand the previous techniques. I even learned new attacks, like how to bypass KASLR, KPTI and SMAP. For the writeup and exploit, pls navigate to the ctf folder.
