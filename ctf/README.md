@@ -50,3 +50,60 @@ As we can see, these functions do several checks on read/write lengths to make s
 These functions never check, if the cursor+count sum is greater than the max size. Because of this, and because we have an lseek operation on this file, we can set the cursor to the MAX_SIZE-1 byte of the buffer, and read/write the length of MAX_SIZE, and this way we are able to read almost the whole 1024 byte struct which comes after this struct in the kmalloc-1024 bin (because this buffer is 1024 bytes long). Thus we have a kmalloc overflow vulnerability.  
 
 ## Plan on controlling the RIP  
+Our goal now is to control the instruction pointer to be able to rop our way into root privileges. For that we need to find a kernel struct that is allocated in the kmalloc-1024 bin and in some way contains a function pointer we can overwrite. The best struct for our case is the `tty_struct`. It's a big struct, but the important parts are in the beginning:  
+```C
+struct tty_struct {
+	int	magic;
+	struct kref kref;
+	struct device *dev;
+	struct tty_driver *driver;
+	const struct tty_operations *ops;
+	int index;
+
+	/* Protects ldisc changes: Lock tty not pty */
+	struct ld_semaphore ldisc_sem;
+	struct tty_ldisc *ldisc;
+  ...
+} __randomize_layout;
+```  
+The most important field is the ops pointer, which points to the `tty_operations` struct, which looks like this:  
+```C
+struct tty_operations {
+	struct tty_struct * (*lookup)(struct tty_driver *driver,
+			struct file *filp, int idx);
+	int  (*install)(struct tty_driver *driver, struct tty_struct *tty);
+	void (*remove)(struct tty_driver *driver, struct tty_struct *tty);
+	int  (*open)(struct tty_struct * tty, struct file * filp);
+	void (*close)(struct tty_struct * tty, struct file * filp);
+	void (*shutdown)(struct tty_struct *tty);
+	void (*cleanup)(struct tty_struct *tty);
+  ...
+} __randomize_layout;
+```  
+So it essentially holds many function pointers for different file structs, which we can call through the `ptmx` device file, which is created in the init script.  
+```bash
+/sbin/mdev -s
+mkdir -p /dev/pts
+mount -vt devpts -o gid=4,mode=620 none /dev/pts
+chmod 666 /dev/ptmx
+```  
+This helps us too, that this is the right struct for kmalloc overflow. So what is the plan? We allocate the memo buffer by opening the device file, then allocating the `tty_struct` (we don't need spraying because there is almost no programs on the machine). We can allocate this with the following function:  
+```C
+int allocate_tty_struct(){
+	int ret;
+
+	ret = open("/dev/ptmx", O_RDWR | O_NOCTTY);
+	if(ret < 0){
+		printf("[-] Failed to allocate tty_struct\n");
+		perror("tty_struct");
+	}
+	return ret;
+}
+```  
+The O_NOCTTY flag is important if we want to allocate this struct. After we are done with the allocations, we can overread the memo buffer, and leaking fields of the tty_struct. Then we have to rewrite the ops pointer to a fake tty_operations struct, which has fake function addresses, that point to our ROP stacklift. But this is not easy to do. We have to bypass the afore mentioned mitigations.  
+
+## Bypassing mitigations  
+As we know from the previous excercises, we need to use a ROP chain to bypass SMEP. But now we have a problem: we have SMAP turned on. This doesn't let us to store the rop chain in our user space buffer, we need to somehow store it in the kernel. For that, we can use the memo buffer. But another problem: we need the address of the memo buffer, which is kinda hard, since it is allocated dynamically and we have KASLR turned on. So before performing this we need to somehow bypass KASLR.  
+This is not even that hard. We need a fix address that we can read from the kernel heap and we need to find that offset, to calculate a base address, and then we will be able to calculate offsets to te needed entities and add them to the base address. So, how do we do that?  
+After reading the kernel source a lot and examining the kernel heap in our debug machine I noticed, that the tty_operations pointer is always the same. This is because the tty_structs basically uses the [ptm_unix98_ops](https://elixir.bootlin.com/linux/latest/source/drivers/tty/pty.c#L766) instance of the struct. To get its offset, we can turn off kaslr and dump the leaked heap content.  
+![dump](images/dump.png)
