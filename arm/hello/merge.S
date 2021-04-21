@@ -81,5 +81,5 @@ mergeend:
 	ldr x0, [sp, #24]
 	ldr x29, [sp, #32]
 	ldr x30, [sp, #40]
-	add sp, sp, #32
+	add sp, sp, #48
 	ret

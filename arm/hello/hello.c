@@ -40,6 +40,7 @@ int main(){
 	for(int i = 0; i < 32; i++){
 		printf("%d ", ret[i]);
 	}
+	puts("");
 	free(ret);
 	return 0;
 }
