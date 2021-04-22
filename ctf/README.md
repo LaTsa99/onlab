@@ -228,5 +228,5 @@ After we have written the new value back in to the kernel heap it is time to tri
 ```C
 ioctl(ttyfd, heap, heap);
 ```  
-Here I set both parameters to the heap address, which is the beginning of our rop chain, tho there was no need to set the third argument, which is just an integer, thus only the 4 lower bytes will be passed, but it is easier to see later in gdb which parameter is where. But the important part is, that in ioctl the heap address will be copied into the r12 register. Now we are done with the exploit, check it out.  
+Here I set both parameters to the heap address, which is the beginning of our rop chain. But the important part is, that in ioctl the heap address will be copied into the r12 register. Now we are done with the exploit, check it out.  
 ![rooted](images/rooted.png)
