@@ -6,3 +6,6 @@ Slab allocator - https://www.youtube.com/watch?v=h0VMLXavx30
 Slides for this video - https://events.static.linuxfound.org/sites/events/files/slides/slaballocators.pdf
 Blogpost about this - https://hammertux.github.io/slab-allocator
 Blogpost about a simple sluboverflow exploit - https://resources.infosecinstitute.com/topic/exploiting-linux-kernel-heap-corruptions-slub-allocator/
+
+******ARM64********
+https://azeria-labs.com/arm-on-x86-qemu-user/
