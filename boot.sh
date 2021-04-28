@@ -1,11 +1,13 @@
 #!/bin/bash
 
-qemu-system-x86_64 \
-	-kernel linux/arch/x86_64/boot/bzImage \
-	-drive file=buildroot/output/images/rootfs.ext2,format=raw \
-	-net nic \
-	-net user,hostfwd=tcp::2222-:22,hostfwd=tcp::9999-:9999,hostfwd=tcp::8000-:8000 \
+qemu-system-aarch64 \
+	-machine virt \
+	-cpu max \
+	-kernel linux/arch/arm64/boot/Image \
+	-drive file=buildroot/output/images/rootfs.ext3,format=raw \
+	-net user,hostfwd=tcp::2222-:22,hostfwd=tcp::9999-:9999 -net nic \
 	-nographic \
-	-append "root=/dev/sda console=ttyS0 nokaslr" \
-	-s \
-	-enable-kvm
+	-smp 1 \
+	-append "root=/dev/vda console=ttyAMA0" \
+	-m 2048 \
+	-s
