@@ -1,1 +1,0 @@
-cmd_/home/latsa/kernel_debug/linux/src/arm_rop/arm.ko := aarch64-linux-gnu-ld -r  -EL  -maarch64elf  --build-id=sha1  -T scripts/module.lds -o /home/latsa/kernel_debug/linux/src/arm_rop/arm.ko /home/latsa/kernel_debug/linux/src/arm_rop/arm.o /home/latsa/kernel_debug/linux/src/arm_rop/arm.mod.o;  true

@@ -1,1 +1,0 @@
-cmd_/home/latsa/kernel_debug/linux/src/arm_rop/Module.symvers := sed 's/ko$$/o/' /home/latsa/kernel_debug/linux/src/arm_rop/modules.order | scripts/mod/modpost     -o /home/latsa/kernel_debug/linux/src/arm_rop/Module.symvers -e -i Module.symvers   -T -
