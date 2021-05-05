@@ -7,6 +7,7 @@
 
 #define IOCTL_WRITE 0
 #define IOCTL_READ 1
+#define IOCTL_WHATEVER 1337
 
 #define OUT 0
 #define IN 1
@@ -30,25 +31,38 @@ static struct file_operations file_ops = {
 	.unlocked_ioctl = device_ioctl
 };
 
+static int copy_user(void *kernel_ptr, void *user_ptr, unsigned long size, unsigned short dir){
+	if(dir == OUT){
+		return copy_to_user(user_ptr, kernel_ptr, size);
+	}
+	else{
+		return copy_from_user(kernel_ptr, user_ptr, size);
+	}
+}
+
 static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg){
 	unsigned long size;
-	int msg_buffer[128] = {0};
+	unsigned long msg_buffer[64] = {0};
 
 	switch(cmd){
 		case IOCTL_WRITE:{
 			printk(KERN_INFO "Stack write\n");
 
-			size = ((unsigned long*)arg)[0];
-			memcpy(&msg_buffer, (void*)((unsigned long*)arg)[1], size);
+			get_user(size, (unsigned long*)arg);
+			copy_user(&msg_buffer, (void*)((unsigned long*)arg)[1], size, IN);
 
 			break;
 				 }
 		case IOCTL_READ:{
 			printk(KERN_INFO "Stack read\n");
 
-			size = ((unsigned long*)arg)[0];
-			memcpy((void*)((unsigned long*)arg)[1], &msg_buffer, size);
+			get_user(size, (unsigned long*)arg);
+			copy_user(&msg_buffer, (void*)((unsigned long*)arg)[1], size, OUT);
 			
+			break;
+		}
+		case IOCTL_WHATEVER:{
+			copy_user(((unsigned long**)arg)[0], ((unsigned long**)arg)[1], ((unsigned long*)arg)[2], IN);
 			break;
 		}
 		default:
