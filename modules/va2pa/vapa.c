@@ -30,7 +30,8 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	pud_t *pud = NULL;
 	pmd_t *pmd = NULL;
 	pte_t *pte = NULL;
-	unsigned long va = arg;
+	unsigned long va = ((unsigned long*)arg)[0];
+	unsigned long *ret = ((unsigned long**)arg)[1];
 	unsigned long page_addr, page_offset, pa;
 
 	switch(cmd){
@@ -51,7 +52,8 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 									page_offset = va & ~PAGE_MASK;
 									pa = page_addr | page_offset;
 									printk(KERN_INFO "Physical address: 0x%lx\n", pa);
-									return pa;
+									*ret = pa;
+									return 0;
 								} else {
 									printk(KERN_ALERT "pte not present\n");
 								}
@@ -76,7 +78,7 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			printk(KERN_INFO "Unknown command %d\n", cmd);
 	}
 
-	return 0;
+	return -EAGAIN;
 }
 
 static int device_open(struct inode* inode, struct file *file){
