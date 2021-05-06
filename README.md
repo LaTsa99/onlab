@@ -2,7 +2,7 @@
 
 ## Table of contents
 
-* [Creating the enviornment and the first kernel module](#creating-the-enviornment-and-the-first-kernel-module)  
+* [Creating the environment and the first kernel module](#creating-the-environment-and-the-first-kernel-module)  
 	 * [Installing qemu](#installing-qemu)  
 	 * [Building linux kernel](#building-linux-kernel)  
 	 * [Compiling buildroot](#compiling-buildroot)  
@@ -32,7 +32,7 @@
 	 * [Moving on to shmat](#moving-on-to-shmat)  
 * [A CTF excercise](#a-ctf-excercise)
 
-## Creating the enviornment and the first kernel module
+## Creating the environment and the first kernel module
 
 ### Installing qemu
 sudo apt install qemu qemu-system-x86
@@ -988,7 +988,7 @@ void create_timer_instance(){
 	timerfd_settime(tfd, 0, &i, 0);
 }
 ```  
-So we can allocate this structure on the kernel heap now. In real enviornments we would have a problem with putting this structure right after our allocation, but since there are not many programs on this qemu instance, we won't have a problem with it. Now let's get to the structure of `hrtimer`.  
+So we can allocate this structure on the kernel heap now. In real environments we would have a problem with putting this structure right after our allocation, but since there are not many programs on this qemu instance, we won't have a problem with it. Now let's get to the structure of `hrtimer`.  
 The first element of the hrtimer is a `timerqueue_node` struct, which contains an `rb_node` struct and a 64 bit integer. The `rb_node` contains an `unsigned long` and two pointers. After these elements in hrtimer, we have another 64 bit integer, and then comes the callback function pointer, that we need to overwrite. If we play around with gdb, we can examine this on the stack:  
 ```
 0xffff888004510500:     0xffff888004510500      0xffffc90000227a68
