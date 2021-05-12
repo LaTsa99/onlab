@@ -31,6 +31,9 @@
 	 * [SLUB overflow](#slub-overflow)  
 	 * [Moving on to shmat](#moving-on-to-shmat)  
 * [A CTF excercise](#a-ctf-excercise)
+* [ARM64](#arm64)
+	 * [New environment](#new-environment)
+	 * [ARM64 assembly](#arm64-assembly)
 
 ## Creating the environment and the first kernel module
 
@@ -1235,3 +1238,16 @@ uid=0(root) gid=0(root)
 
 ## A CTF excercise  
 Before moving on to learning arm64, I was given a ctf challenge to solve, to check if I really understand the previous techniques. I even learned new attacks, like how to bypass KASLR, KPTI and SMAP. For the writeup and exploit, pls navigate to the ctf folder.
+
+## ARM64  
+### New environment  
+From now on we will work on the arm64 architecture. For that I needed to install some tools.  
+```
+sudo apt install qemu-user qemu-user-static gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu binutils-aarch64-linux-gnu-dbg build-essential
+sudo apt install qemu-aarch64
+```  
+For building the kernel and the rootfs I somewhat followed [this](https://github.com/google/syzkaller/blob/master/docs/linux/setup_linux-host_qemu-vm_arm64-kernel.md) guide. For working with the virtual machine I rewrote the booting script and the module loader script too (the old scripts are in the old folder). For debugging the kernel now we need to use `gdb-multiarch`, which works like the original gdb and uses the same gdbinit, so we don't need to install pwndbg again.  
+
+### ARM64 assembly
+To learn the arm64 assembly and to get familiar with the differences between arm64 and x86, I wrote a bubble sort and a merge sort program in arm64 assembly, which I called from a C program.  
+One big difference is the function calling convention. In Aarch64 the caller doesn't put parameters on the stack (in most cases) and the return address isn't pushed onto the stack neither.
