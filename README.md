@@ -34,6 +34,7 @@
 * [ARM64](#arm64)
 	 * [New environment](#new-environment)
 	 * [ARM64 assembly](#arm64-assembly)  
+	 * [Memory debugger](#memory-debugger)  
 
 
 ## Creating the environment and the first kernel module
