@@ -33,7 +33,8 @@
 * [A CTF excercise](#a-ctf-excercise)
 * [ARM64](#arm64)
 	 * [New environment](#new-environment)
-	 * [ARM64 assembly](#arm64-assembly)
+	 * [ARM64 assembly](#arm64-assembly)  
+
 
 ## Creating the environment and the first kernel module
 
@@ -1250,4 +1251,82 @@ For building the kernel and the rootfs I somewhat followed [this](https://github
 
 ### ARM64 assembly
 To learn the arm64 assembly and to get familiar with the differences between arm64 and x86, I wrote a bubble sort and a merge sort program in arm64 assembly, which I called from a C program.  
-One big difference is the function calling convention. In Aarch64 the caller doesn't put parameters on the stack (in most cases) and the return address isn't pushed onto the stack neither.
+One big difference is the function calling convention. In Aarch64 the caller doesn't put parameters on the stack (in most cases) and the return address isn't pushed onto the stack neither. Instead the first few registers are used for parameter passing and the return address is passed in the x30 register (link register), while the base frame pointer in x29. Because of that, in the beginning of the function we need to store the x29 and the x30 register on the stack, especially if we call another function from here, because then the x29 and the x30 registers will be set for the return to this function. This will cause harder times for us during exploitation, because we need rop gadgets that contains the `ldp x29, x30, [sp, #x]` instruction and the buffer overflow will be harder to perform, because today's compilers will put the return address on the top of the stack, so we cannot modify it by overflowing the buffer.  
+To showcase  this convention, here are the beginning and the end of the merge sort function. Of course, I put the x29 and the x30 registers on the bottom of the frame, but the compilers will not do this.    
+```asm
+merge:
+	sub sp, sp, #48		// increase stack
+	str x0, [sp]		// saving array1 to stack
+	str w1, [sp, #8]	// saving length1 to stack
+	str x2, [sp, #12]	// saving array2 to stack
+	str w3, [sp, #20]	// saving length2 to stack
+	str x29, [sp, #32]	// saving x29 and x30 for returning to caller
+	str x30, [sp, #40]	// because calling malloc will modify these
+```  
+```asm
+mergeend:
+	ldr x0, [sp, #24]	// return new array in x0
+	ldr x29, [sp, #32]	// reset x29
+	ldr x30, [sp, #40]	// reset x30
+	add sp, sp, #48		// decreasing stack
+	ret
+```  
+The rest of the code is not important, I just implemented the algorithms without caring about the efficiency much. The compilation of the code can be done with the `compile.sh` script.  
+
+### Memory debugger  
+Using this qemu environment it is easy to debug the low level stuff. If we want to check, wether a memory page is PXN protected, we can use gdb connected to our qemu machine. But when we want to exploit a real device, we won't have a debug port on the phone, we cannot use debuggers for that. Instead we need to make our own kernel modules, compile them on the device and call them from userspace. This memory debugger is an example for this.  
+What this module does, is takes a virtual address, then walks in every page tables, searches for the needed entry in each table, then beside gathering the physical address it gathers all informations that can be read from the information bit in each entry.  
+For this the module uses predefined macros from the linux kernel. For example the most interesting entry, the `Page Table Entry` can be found with `pte_offset_kernel(pmd, virtual_address)`, where pmd is the output of `pmd_offset(pud, virtual_address)` and so on. This gives address to the page table entry that contains the address of the physical page and many information bits, which we can get by masking with predefined macros, like `PTE_PXN` masks out the control bit, which tells us, if the page has PXN protection. Here are the mentioned parts of the code:  
+```C
+pmd = pmd_offset(pud, virtual);
+if(pmd_none(*pmd)){
+	printk(KERN_ALERT "pmd none");
+	return;
+}
+
+pte = pte_offset_kernel(pmd, virtual);
+if(pte_none(*pte)){
+	printk(KERN_ALERT "pte none");
+	return;
+}
+
+...
+    
+if(flags & INFO_PTE){
+        printk("----------------PTE INFO-----------------------\n");
+        printk("page table entry:\t0x%016lx\n", (unsigned long)(pte->pte));
+        check((unsigned long)pte->pte, (unsigned long)PTE_VALID, "PTE_VALID");
+        check((unsigned long)pte->pte, (unsigned long)PTE_TYPE_MASK, "PTE_TYPE_MASK");
+        ...
+        check((unsigned long)pte->pte, (unsigned long)PTE_PXN, "PTE_PXN");
+        ...
+}
+```
+```C
+static void check(unsigned long entry, unsigned long mask, const char* str){
+	if(entry & mask){
+		printk("%-15s:\t[+]\n", str);
+	}else{
+		printk("%-15s:\t[-]\n", str);
+	}
+}
+```  
+The module can be called with an ioctl function, where we can pass a struct:  
+```C
+#define INFO_PGD 0x01
+#define INFO_P4D 0x02
+#define INFO_PUD 0x04
+#define INFO_PMD 0x08
+#define INFO_PTE 0x10
+
+struct translate_mem{
+    unsigned long virtual;
+    unsigned short flags;
+};
+```  
+Here the virtual contains the virtual address we want to translate and we can give a flag, which tells which info we need. If it is 0, then we get only the physical address. This can be useful if we don't want to get every piece of information. Here's an example for the usage:  
+```C
+payload->virtual = some_pointer;
+payload->flags = INFO_PUD | INFO_PMD | INFO_PTE;
+ret = (unsigned long)ioctl(fd, 0, (unsigned long)payload);
+```  
