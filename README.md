@@ -40,7 +40,7 @@
 ## Creating the environment and the first kernel module
 
 ### Installing qemu
-sudo apt install qemu qemu-system-x86
+```sudo apt install qemu qemu-system-x86```
 
 ```mkdir ~/kernel_debug  ```
 // download linux source tar, extract it and rename linux-<version> to linux  
