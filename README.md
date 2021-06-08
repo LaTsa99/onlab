@@ -1336,7 +1336,7 @@ ret = (unsigned long)ioctl(fd, 0, (unsigned long)payload);
 ```  
 
 ## PXN bypass  
-As my final exploit in this repository (for now) is a simple buffer overflow exploit with PXN protection turned on. It is basically the same as SMEP on x86: we cannot execute code from userspace pages if we are operating in kernel mode. We can bypass this with the well known ROP technique, but our job will be a bit harder. Let's see why.  
+My final exploit in this repository (for now) is a simple buffer overflow exploit with PXN protection turned on. It is basically the same as SMEP on x86: we cannot execute code from userspace pages if we are operating in kernel mode. We can bypass this with the well known ROP technique, but our job will be a bit harder. Let's see why.  
 	
 ### ROP tales in arm64 land  
 What should our ROP code do? It should call `commit_creds(prepare_kernel_cred(0))` to escalate the privilege of the caller process and then return to userland. Until the commit_creds part it is not much harder than in x86, we just need to look for gadgets which contain the `ldp x29, x30, [sp]` instruction to be able to chain the gadgets together. And one more thing right in the beginning: how do we overwrite the saved return address, if it is placed on the top of the stack (before any buffers)? Well, the only way I found is to overwrite the saved X30 of the function that called this function (in this case __arm64_sys_ioctl). Here's the start of the chain:  
