@@ -51,7 +51,8 @@
  
 
 From here basically following the steps in the following website:  
-https://www.nullbyte.cat/post/linux-kernel-exploit-development-environment/
+https://www.nullbyte.cat/post/linux-kernel-exploit-development-environment/  
+(website seems down in may 2023, [here](https://web.archive.org/web/20230129044934/https://www.nullbyte.cat/post/linux-kernel-exploit-development-environment/) you can read it.)
 
 ### Building linux kernel
 Configured everything just like on the website, but didnt apply KASan debugger and didn't disable any security features (will disable kaslr in qemu).  
